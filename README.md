@@ -1,2 +1,354 @@
-# azure-scripts
-Scripts e ferramentas para automação no Azure
+# 🛡️ M365 Security Toolkit
+
+**Conjunto de scripts PowerShell para auditoria, remediação e otimização de segurança em tenants Microsoft 365.**
+
+[![PowerShell](https://img.shields.io/badge/PowerShell-7.0+-blue.svg)](https://github.com/PowerShell/PowerShell)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![M365](https://img.shields.io/badge/Microsoft%20365-Compatible-orange.svg)](https://www.microsoft.com/microsoft-365)
+
+---
+
+## 📋 Índice
+
+- [Visão Geral](#-visão-geral)
+- [Pré-requisitos](#-pré-requisitos)
+- [Instalação](#-instalação)
+- [Scripts Disponíveis](#-scripts-disponíveis)
+- [Guia de Uso Rápido](#-guia-de-uso-rápido)
+- [Workflow Recomendado](#-workflow-recomendado)
+- [Licenças Necessárias](#-licenças-necessárias)
+- [Suporte](#-suporte)
+
+---
+
+## 🎯 Visão Geral
+
+Este toolkit foi desenvolvido para administradores de TI que gerenciam múltiplos tenants Microsoft 365 e precisam:
+
+- **Auditar** configurações de segurança existentes
+- **Identificar** vulnerabilidades e gaps de compliance
+- **Remediar** problemas de forma automatizada
+- **Documentar** o estado de segurança do ambiente
+
+### Cenários de Uso
+
+| Cenário | Scripts Recomendados |
+|---------|---------------------|
+| Novo tenant M365 | `Exchange-Audit.ps1` → `Purview-Audit-PS7.ps1` → `M365-Remediation.ps1` |
+| Auditoria periódica | `Exchange-Audit.ps1` + `Purview-Audit-PS7.ps1` |
+| Pós-incidente de segurança | `Clean-InboxRules.ps1` + `Exchange-Audit.ps1` |
+| Limpeza de dispositivos | `Remove-InactiveDevices.ps1` |
+| Ambiente VDI | `Remove-InactiveDevices-AzureAutomation.ps1` |
+
+---
+
+## 📦 Pré-requisitos
+
+### Software
+
+```powershell
+# PowerShell 7+ (recomendado)
+winget install Microsoft.PowerShell
+
+# Ou para Mac/Linux
+brew install powershell/tap/powershell
+```
+
+### Módulos PowerShell
+
+```powershell
+# Exchange Online Management
+Install-Module -Name ExchangeOnlineManagement -Force -AllowClobber
+
+# Microsoft Graph (para scripts de dispositivos)
+Install-Module -Name Microsoft.Graph -Force -AllowClobber
+
+# Verificar instalação
+Get-InstalledModule ExchangeOnlineManagement, Microsoft.Graph
+```
+
+### Permissões Necessárias
+
+| Script | Permissões Azure AD/Entra ID |
+|--------|-----------------------------|
+| Exchange-Audit.ps1 | Global Reader, Exchange Administrator |
+| Purview-Audit-PS7.ps1 | Compliance Administrator |
+| M365-Remediation.ps1 | Exchange Administrator, Compliance Administrator |
+| Clean-InboxRules.ps1 | Exchange Administrator |
+| Remove-InactiveDevices.ps1 | Cloud Device Administrator |
+
+---
+
+## 💾 Instalação
+
+### Opção 1: Clone do Repositório
+
+```bash
+git clone https://github.com/crayes/azure-scripts.git
+cd azure-scripts
+```
+
+### Opção 2: Download Direto
+
+```powershell
+# Download de um script específico
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/crayes/azure-scripts/main/scripts/Exchange/Exchange-Audit.ps1" -OutFile "Exchange-Audit.ps1"
+```
+
+---
+
+## 📂 Scripts Disponíveis
+
+### 📧 Exchange Online
+
+#### `Exchange-Audit.ps1`
+Auditoria completa do Exchange Online incluindo:
+- Verificação SPF, DKIM, DMARC
+- Análise de regras de transporte
+- Detecção de forwarding externo
+- Políticas anti-spam e anti-malware
+- Conectores e configurações de segurança
+
+```powershell
+# Execução básica
+./scripts/Exchange/Exchange-Audit.ps1
+
+# Gera relatório HTML automaticamente
+```
+
+#### `Clean-InboxRules.ps1`
+Identifica e remove regras de inbox problemáticas:
+- Regras com pastas deletadas
+- Regras com destinatários inexistentes
+- Regras potencialmente maliciosas
+
+```powershell
+# Apenas relatório (não remove nada)
+./scripts/Exchange/Clean-InboxRules.ps1 -ReportOnly
+
+# Remoção interativa
+./scripts/Exchange/Clean-InboxRules.ps1
+
+# Remoção automática de todas
+./scripts/Exchange/Clean-InboxRules.ps1 -RemoveAll
+```
+
+---
+
+### 🛡️ Microsoft Purview
+
+#### `Purview-Audit-PS7.ps1`
+Auditoria abrangente do Microsoft Purview:
+- Políticas DLP
+- Configurações de Audit Log
+- Políticas de retenção
+- Labels de sensibilidade
+- Alertas de segurança
+- Safe Links e Safe Attachments
+
+```powershell
+# Execução padrão
+./scripts/Purview/Purview-Audit-PS7.ps1
+
+# Com pasta de saída customizada
+./scripts/Purview/Purview-Audit-PS7.ps1 -OutputPath "./MeuRelatorio"
+```
+
+**Saída:**
+- `audit-results.json` - Dados estruturados
+- `recommendations.csv` - Lista de recomendações priorizadas
+
+---
+
+### 🔧 Remediação
+
+#### `M365-Remediation.ps1`
+Aplica configurações de segurança recomendadas:
+- ✅ Ativa Unified Audit Log
+- ✅ Desabilita provedores externos no OWA
+- ✅ Cria políticas DLP para dados brasileiros (CPF, CNPJ, RG)
+- ✅ Configura alertas de segurança
+
+```powershell
+# Execução com backup automático
+./scripts/Remediation/M365-Remediation.ps1
+
+# O script cria backup antes de cada alteração
+# Backup salvo em: ./M365-Backup_YYYYMMDD_HHMMSS.json
+```
+
+**⚠️ Importante:** Execute sempre a auditoria antes da remediação!
+
+---
+
+### 💻 Entra ID / Dispositivos
+
+#### `Remove-InactiveDevices.ps1`
+Gerenciamento de dispositivos inativos no Entra ID:
+- Lista dispositivos sem atividade
+- Gera relatórios CSV e HTML
+- Remove dispositivos com confirmação
+
+```powershell
+# Listar dispositivos inativos (6 meses padrão)
+./scripts/EntraID/Remove-InactiveDevices.ps1 -TenantId "contoso.com"
+
+# Customizar período (3 meses)
+./scripts/EntraID/Remove-InactiveDevices.ps1 -TenantId "contoso.com" -MonthsInactive 3
+
+# Apenas exportar relatório
+./scripts/EntraID/Remove-InactiveDevices.ps1 -TenantId "contoso.com" -ExportOnly
+
+# Remover dispositivos (requer confirmação)
+./scripts/EntraID/Remove-InactiveDevices.ps1 -TenantId "contoso.com" -Delete
+```
+
+#### `Remove-InactiveDevices-AzureAutomation.ps1`
+Versão para Azure Automation com Managed Identity:
+- Ideal para execução agendada
+- Perfeito para ambientes VDI
+- Suporte a notificações por email
+
+```powershell
+# Configurar no Azure Automation:
+# 1. Criar Automation Account
+# 2. Habilitar System Managed Identity
+# 3. Atribuir permissão Device.ReadWrite.All no Graph
+# 4. Importar runbook
+# 5. Agendar execução semanal/mensal
+```
+
+---
+
+### 🌐 DNS
+
+#### `check-dns.sh`
+Verificação de registros DNS para autenticação de email:
+- SPF
+- DKIM (selectores Microsoft)
+- DMARC
+- MX Records
+
+```bash
+# Editar domínios no script
+DOMAINS=("seudominio.com.br" "outrodominio.com")
+
+# Executar
+chmod +x ./scripts/DNS/check-dns.sh
+./scripts/DNS/check-dns.sh
+```
+
+---
+
+## 🚀 Guia de Uso Rápido
+
+### Primeira Execução em Novo Tenant
+
+```powershell
+# 1. Conectar aos serviços
+Connect-ExchangeOnline
+Connect-IPPSSession
+
+# 2. Executar auditoria do Exchange
+./scripts/Exchange/Exchange-Audit.ps1
+
+# 3. Executar auditoria do Purview
+./scripts/Purview/Purview-Audit-PS7.ps1
+
+# 4. Revisar relatórios gerados
+
+# 5. Aplicar remediações
+./scripts/Remediation/M365-Remediation.ps1
+
+# 6. Desconectar
+Disconnect-ExchangeOnline -Confirm:$false
+```
+
+### Pós-Incidente de Segurança
+
+```powershell
+# 1. Verificar regras de inbox suspeitas
+./scripts/Exchange/Clean-InboxRules.ps1 -ReportOnly
+
+# 2. Revisar o relatório CSV gerado
+
+# 3. Remover regras maliciosas
+./scripts/Exchange/Clean-InboxRules.ps1
+
+# 4. Executar auditoria completa
+./scripts/Exchange/Exchange-Audit.ps1
+```
+
+---
+
+## 📊 Workflow Recomendado
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    WORKFLOW DE SEGURANÇA M365                    │
+└─────────────────────────────────────────────────────────────────┘
+
+    ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+    │   AUDITORIA  │────▶│   ANÁLISE    │────▶│  REMEDIAÇÃO  │
+    └──────────────┘     └──────────────┘     └──────────────┘
+           │                    │                    │
+           ▼                    ▼                    ▼
+    Exchange-Audit      Revisar JSON/CSV     M365-Remediation
+    Purview-Audit       Priorizar issues     Clean-InboxRules
+    check-dns.sh        Documentar gaps      Remove-Devices
+           │                    │                    │
+           └────────────────────┼────────────────────┘
+                               ▼
+                    ┌──────────────────┐
+                    │    MONITORAR     │
+                    │   (Mensal/Trim)  │
+                    └──────────────────┘
+```
+
+---
+
+## 📜 Licenças Microsoft Necessárias
+
+| Recurso | Licença Mínima |
+|---------|---------------|
+| Unified Audit Log | Microsoft 365 E3/E5, Business Premium |
+| DLP Policies | Microsoft 365 E3/E5, Compliance Add-on |
+| Safe Links/Attachments | Microsoft Defender for Office 365 |
+| Sensitivity Labels | Microsoft 365 E3/E5, AIP P1/P2 |
+| Alertas Customizados | Microsoft 365 E5, Compliance Add-on |
+
+---
+
+## 🤝 Contribuições
+
+Contribuições são bem-vindas! Por favor:
+
+1. Fork o repositório
+2. Crie uma branch (`git checkout -b feature/NovoScript`)
+3. Commit suas mudanças (`git commit -am 'Add: novo script'`)
+4. Push para a branch (`git push origin feature/NovoScript`)
+5. Abra um Pull Request
+
+---
+
+## 📝 Changelog
+
+### v2.0 - Janeiro 2026
+- ✨ Compatibilidade com PowerShell 7 (Mac/Linux)
+- 🔧 Novos scripts de remediação
+- 📊 Relatórios HTML aprimorados
+- 🛡️ Scripts de gestão de dispositivos
+
+---
+
+## 📄 Licença
+
+Este projeto está licenciado sob a MIT License - veja o arquivo [LICENSE](LICENSE) para detalhes.
+
+---
+
+## 👨‍💻 Autor
+
+Desenvolvido para administração de múltiplos tenants Microsoft 365.
+
+**Contato:** Abra uma issue para dúvidas ou sugestões.
