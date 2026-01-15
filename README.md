@@ -39,6 +39,7 @@ Este toolkit foi desenvolvido para administradores de TI que gerenciam múltiplo
 | Pós-incidente de segurança | `Clean-InboxRules.ps1` + `Exchange-Audit.ps1` |
 | Limpeza de dispositivos | `Remove-InactiveDevices.ps1` |
 | Ambiente VDI | `Remove-InactiveDevices-AzureAutomation.ps1` |
+| Manutenção Hybrid Identity | `Rotate-KerberosKey-SSO.ps1` |
 
 ---
 
@@ -76,6 +77,7 @@ Get-InstalledModule ExchangeOnlineManagement, Microsoft.Graph
 | M365-Remediation.ps1 | Exchange Administrator, Compliance Administrator |
 | Clean-InboxRules.ps1 | Exchange Administrator |
 | Remove-InactiveDevices.ps1 | Cloud Device Administrator |
+| Rotate-KerberosKey-SSO.ps1 | Global Admin ou Hybrid Identity Admin + Domain Admin local |
 
 ---
 
@@ -220,6 +222,38 @@ Versão para Azure Automation com Managed Identity:
 
 ---
 
+### 🔐 Hybrid Identity / Entra Connect
+
+#### `Rotate-KerberosKey-SSO.ps1`
+Rotação da chave Kerberos para Seamless SSO do Azure AD Connect:
+- Verifica status da conta AZUREADSSOACC
+- Mostra dias desde última rotação
+- Executa rotação com confirmação
+- Gera log de todas operações
+
+**⚠️ Executar no servidor Azure AD Connect como Administrador!**
+
+```powershell
+# Apenas verificar status (não altera nada)
+./scripts/HybridIdentity/Rotate-KerberosKey-SSO.ps1 -CheckOnly
+
+# Executar rotação com confirmação
+./scripts/HybridIdentity/Rotate-KerberosKey-SSO.ps1
+
+# Executar rotação sem confirmação (automação)
+./scripts/HybridIdentity/Rotate-KerberosKey-SSO.ps1 -SkipConfirmation
+```
+
+**Pré-requisitos:**
+- Executar no servidor Azure AD Connect
+- Conta Global Admin ou Hybrid Identity Admin no Entra ID
+- Conta Domain Admin no AD local
+- Módulo ActiveDirectory instalado
+
+**Recomendação Microsoft:** Rotacionar a cada 30 dias.
+
+---
+
 ### 🌐 DNS
 
 #### `check-dns.sh`
@@ -279,6 +313,21 @@ Disconnect-ExchangeOnline -Confirm:$false
 ./scripts/Exchange/Exchange-Audit.ps1
 ```
 
+### Manutenção Mensal Hybrid Identity
+
+```powershell
+# No servidor Azure AD Connect (como Admin)
+
+# 1. Verificar status atual
+./scripts/HybridIdentity/Rotate-KerberosKey-SSO.ps1 -CheckOnly
+
+# 2. Se > 30 dias, rotacionar
+./scripts/HybridIdentity/Rotate-KerberosKey-SSO.ps1
+
+# 3. Aguardar 10-15 min para propagação
+# 4. Testar SSO com usuário em máquina corporativa
+```
+
 ---
 
 ## 📊 Workflow Recomendado
@@ -303,6 +352,13 @@ Disconnect-ExchangeOnline -Confirm:$false
                     │    MONITORAR     │
                     │   (Mensal/Trim)  │
                     └──────────────────┘
+                               │
+                               ▼
+                    ┌──────────────────┐
+                    │  HYBRID IDENTITY │
+                    │ Kerberos Rotation│
+                    │   (Mensal)       │
+                    └──────────────────┘
 ```
 
 ---
@@ -316,6 +372,7 @@ Disconnect-ExchangeOnline -Confirm:$false
 | Safe Links/Attachments | Microsoft Defender for Office 365 |
 | Sensitivity Labels | Microsoft 365 E3/E5, AIP P1/P2 |
 | Alertas Customizados | Microsoft 365 E5, Compliance Add-on |
+| Seamless SSO | Azure AD Free (com AD Connect) |
 
 ---
 
@@ -332,6 +389,10 @@ Contribuições são bem-vindas! Por favor:
 ---
 
 ## 📝 Changelog
+
+### v2.1 - Janeiro 2026
+- ✨ Novo: Script de rotação Kerberos para Seamless SSO
+- 📁 Nova pasta: HybridIdentity
 
 ### v2.0 - Janeiro 2026
 - ✨ Compatibilidade com PowerShell 7 (Mac/Linux)
