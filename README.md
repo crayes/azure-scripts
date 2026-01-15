@@ -34,8 +34,9 @@ Este toolkit foi desenvolvido para administradores de TI que gerenciam múltiplo
 
 | Cenário | Scripts Recomendados |
 |---------|---------------------|
-| Novo tenant M365 | `Exchange-Audit.ps1` → `Purview-Audit-PS7.ps1` → `M365-Remediation.ps1` |
-| Auditoria periódica | `Exchange-Audit.ps1` + `Purview-Audit-PS7.ps1` |
+| Novo tenant M365 | `Exchange-Audit.ps1` → `Purview-Audit-PS7.ps1` → `OneDrive-Complete-Audit.ps1` |
+| Auditoria periódica | `Exchange-Audit.ps1` + `Purview-Audit-PS7.ps1` + `OneDrive-Complete-Audit.ps1` |
+| Auditoria OneDrive/SharePoint | `OneDrive-Complete-Audit.ps1` + `REMEDIATION-CHECKLIST.md` |
 | Pós-incidente de segurança | `Clean-InboxRules.ps1` + `Exchange-Audit.ps1` |
 | Limpeza de dispositivos | `Remove-InactiveDevices.ps1` |
 | Ambiente VDI | `Remove-InactiveDevices-AzureAutomation.ps1` |
@@ -68,6 +69,8 @@ Install-Module -Name Microsoft.Graph -Force -AllowClobber
 Get-InstalledModule ExchangeOnlineManagement, Microsoft.Graph
 ```
 
+> **💡 Nota:** O script `OneDrive-Complete-Audit.ps1` usa REST API pura e **não requer módulos adicionais**.
+
 ### Permissões Necessárias
 
 | Script | Permissões Azure AD/Entra ID |
@@ -78,6 +81,7 @@ Get-InstalledModule ExchangeOnlineManagement, Microsoft.Graph
 | Clean-InboxRules.ps1 | Exchange Administrator |
 | Remove-InactiveDevices.ps1 | Cloud Device Administrator |
 | Rotate-KerberosKey-SSO.ps1 | Global Admin ou Hybrid Identity Admin + Domain Admin local |
+| OneDrive-Complete-Audit.ps1 | SharePoint Administrator ou Global Admin |
 
 ---
 
@@ -100,6 +104,44 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/crayes/azure-scripts/m
 ---
 
 ## 📂 Scripts Disponíveis
+
+### ☁️ OneDrive / SharePoint Online
+
+#### `OneDrive-Complete-Audit.ps1`
+Auditoria completa de segurança do OneDrive for Business e SharePoint Online usando **REST API pura** (compatível com macOS, Windows e Linux):
+
+- Configurações de compartilhamento externo
+- Tipos e permissões de links padrão
+- Expiração de links e usuários externos
+- Restrições de sincronização
+- Autenticação legacy
+- Security Defaults e Conditional Access
+- Proteção de dados (AIP/Sensitivity Labels)
+- Relatório HTML interativo com priorização por risco
+
+```powershell
+# Execução básica
+./scripts/OneDrive/OneDrive-Complete-Audit.ps1 -TenantName "contoso"
+
+# Com pasta de saída customizada
+./scripts/OneDrive/OneDrive-Complete-Audit.ps1 -TenantName "contoso" -OutputPath "./Relatorios"
+```
+
+**Saída:**
+- `OneDrive-Audit-Findings_<timestamp>.csv` - Findings priorizados
+- `OneDrive-Audit-AllSettings_<timestamp>.csv` - Todas configurações coletadas
+- `OneDrive-Complete-Audit-Report_<timestamp>.html` - Relatório visual
+
+**⚠️ Importante:** A remediação deve ser feita **manualmente** no SharePoint Admin Center. Consulte o arquivo `REMEDIATION-CHECKLIST.md` para instruções detalhadas.
+
+#### `REMEDIATION-CHECKLIST.md`
+Checklist completo para aplicar correções de segurança no SharePoint Admin Center:
+- 🔴 Itens críticos (corrigir imediatamente)
+- 🟠 Itens altos (corrigir em 1-2 semanas)
+- 🟡 Itens médios (avaliar em 1 mês)
+- 🔵 Itens baixos (melhorias recomendadas)
+
+---
 
 ### 📧 Exchange Online
 
@@ -279,23 +321,46 @@ chmod +x ./scripts/DNS/check-dns.sh
 ### Primeira Execução em Novo Tenant
 
 ```powershell
-# 1. Conectar aos serviços
+# 1. Auditoria OneDrive/SharePoint (não requer módulos)
+./scripts/OneDrive/OneDrive-Complete-Audit.ps1 -TenantName "contoso"
+
+# 2. Conectar aos serviços Exchange
 Connect-ExchangeOnline
 Connect-IPPSSession
 
-# 2. Executar auditoria do Exchange
+# 3. Executar auditoria do Exchange
 ./scripts/Exchange/Exchange-Audit.ps1
 
-# 3. Executar auditoria do Purview
+# 4. Executar auditoria do Purview
 ./scripts/Purview/Purview-Audit-PS7.ps1
 
-# 4. Revisar relatórios gerados
+# 5. Revisar relatórios gerados
 
-# 5. Aplicar remediações
+# 6. Aplicar remediações do Exchange
 ./scripts/Remediation/M365-Remediation.ps1
 
-# 6. Desconectar
+# 7. Aplicar remediações do OneDrive (manual)
+# Seguir REMEDIATION-CHECKLIST.md no SharePoint Admin Center
+
+# 8. Desconectar
 Disconnect-ExchangeOnline -Confirm:$false
+```
+
+### Auditoria Completa de OneDrive
+
+```powershell
+# 1. Executar auditoria
+./scripts/OneDrive/OneDrive-Complete-Audit.ps1 -TenantName "contoso"
+
+# 2. Revisar relatório HTML gerado
+
+# 3. Aplicar correções no SharePoint Admin Center
+# https://contoso-admin.sharepoint.com
+
+# 4. Seguir o checklist em REMEDIATION-CHECKLIST.md
+
+# 5. Re-executar auditoria para validar
+./scripts/OneDrive/OneDrive-Complete-Audit.ps1 -TenantName "contoso"
 ```
 
 ### Pós-Incidente de Segurança
@@ -344,7 +409,8 @@ Disconnect-ExchangeOnline -Confirm:$false
            ▼                    ▼                    ▼
     Exchange-Audit      Revisar JSON/CSV     M365-Remediation
     Purview-Audit       Priorizar issues     Clean-InboxRules
-    check-dns.sh        Documentar gaps      Remove-Devices
+    OneDrive-Audit      Documentar gaps      SPO Admin Center
+    check-dns.sh                             Remove-Devices
            │                    │                    │
            └────────────────────┼────────────────────┘
                                ▼
@@ -373,6 +439,8 @@ Disconnect-ExchangeOnline -Confirm:$false
 | Sensitivity Labels | Microsoft 365 E3/E5, AIP P1/P2 |
 | Alertas Customizados | Microsoft 365 E5, Compliance Add-on |
 | Seamless SSO | Azure AD Free (com AD Connect) |
+| OneDrive for Business | Microsoft 365 Business Basic+ |
+| SharePoint Admin | Microsoft 365 Business Basic+ |
 
 ---
 
@@ -389,6 +457,12 @@ Contribuições são bem-vindas! Por favor:
 ---
 
 ## 📝 Changelog
+
+### v2.2 - Janeiro 2026
+- ✨ Novo: `OneDrive-Complete-Audit.ps1` - Auditoria de segurança do OneDrive/SharePoint
+- ✨ Novo: `REMEDIATION-CHECKLIST.md` - Checklist de remediação manual
+- 📁 Nova pasta: OneDrive
+- 🔧 REST API pura - Compatível com macOS/Windows/Linux sem módulos adicionais
 
 ### v2.1 - Janeiro 2026
 - ✨ Novo: Script de rotação Kerberos para Seamless SSO
