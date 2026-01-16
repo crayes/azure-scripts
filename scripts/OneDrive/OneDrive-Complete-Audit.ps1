@@ -6,7 +6,7 @@
     Usa REST API pura (Graph API) - compatível com macOS, Windows e Linux.
     Não requer módulos adicionais como PnP.PowerShell.
 .VERSION
-    5.0.0 - Complete Audit Edition
+    5.1.0 - Enhanced Edition with Error Handling and Validation Improvements
 .REQUIREMENTS
     - PowerShell 7.0+
     - Conta com permissão SharePoint Admin ou Global Admin
@@ -14,8 +14,9 @@
     ./OneDrive-Complete-Audit.ps1 -TenantName "contoso"
 .OUTPUTS
     - OneDrive-Audit-Findings_<timestamp>.csv
-    - OneDrive-Audit-AllSettings_<timestamp>.csv  
+    - OneDrive-Audit-AllSettings_<timestamp>.csv
     - OneDrive-Complete-Audit-Report_<timestamp>.html
+    - OneDrive-Audit-Findings_<timestamp>.json (opcional)
 .NOTES
     A remediação deve ser feita manualmente no SharePoint Admin Center.
     Consulte REMEDIATION-CHECKLIST.md para instruções detalhadas.
@@ -26,8 +27,25 @@ param(
     [string]$TenantName,
     
     [Parameter(Mandatory = $false)]
-    [string]$OutputPath = "$HOME/OneDrive-Audit-Report"
+    [string]$OutputPath = "$HOME/OneDrive-Audit-Report",
+    
+    [Parameter(Mandatory = $false)]
+    [switch]$ExportJson,
+    
+    [Parameter(Mandatory = $false)]
+    [switch]$SkipSharingAnalysis
 )
+
+# Validate TenantName input
+if ([string]::IsNullOrWhiteSpace($TenantName)) {
+    $TenantName = Read-Host "`nDigite o nome do tenant (ex: contoso)"
+}
+if ($TenantName -notmatch '^[a-zA-Z0-9\-]+$') {
+    Write-Error "Nome do tenant inválido. Use apenas letras, números e hífens (ex: contoso)."
+    exit 1
+}
+$TenantName = $TenantName -replace "\.onmicrosoft\.com$", ""
+$TenantId = "$TenantName.onmicrosoft.com"
 
 #region Variables
 $script:AccessToken = $null
@@ -113,9 +131,9 @@ function Get-DeviceCodeToken {
         $deviceCodeResponse = Invoke-RestMethod -Uri $deviceCodeUrl -Method POST -Body $body -ContentType "application/x-www-form-urlencoded"
         
         Write-Host "`n"
-        Write-Host "╔═══════════════════════════════════════════════════════════════╗" -ForegroundColor Yellow
+        Write-Host "╔═════════════════════════════════════════════════════════╗"
         Write-Host "║                   AUTENTICAÇÃO NECESSÁRIA                     ║" -ForegroundColor Yellow
-        Write-Host "╠═══════════════════════════════════════════════════════════════╣" -ForegroundColor Yellow
+        Write-Host "╠═════════════════════════════════════════════════════════╣"
         Write-Host "║  1. Abra o navegador e acesse:                                ║" -ForegroundColor White
         Write-Host "║     https://microsoft.com/devicelogin                         ║" -ForegroundColor Cyan
         Write-Host "║                                                               ║" -ForegroundColor Yellow
@@ -123,7 +141,7 @@ function Get-DeviceCodeToken {
         Write-Host "║     $($deviceCodeResponse.user_code.PadRight(10))                                            ║" -ForegroundColor Green
         Write-Host "║                                                               ║" -ForegroundColor Yellow
         Write-Host "║  3. Faça login com conta de SharePoint Admin ou Global Admin  ║" -ForegroundColor White
-        Write-Host "╚═══════════════════════════════════════════════════════════════╝" -ForegroundColor Yellow
+        Write-Host "╚═════════════════════════════════════════════════════════╝"
         Write-Host ""
         
         $interval = $deviceCodeResponse.interval
@@ -163,7 +181,7 @@ function Get-DeviceCodeToken {
 }
 
 function Invoke-GraphAPI {
-    param([string]$Uri, [string]$Method = "GET", [switch]$Beta)
+    param([string]$Uri, [string]$Method = "GET", [switch]$Beta, [int]$RetryCount = 0)
     
     $baseUrl = if ($Beta) { "https://graph.microsoft.com/beta" } else { "https://graph.microsoft.com/v1.0" }
     $fullUri = if ($Uri.StartsWith("http")) { $Uri } else { "$baseUrl$Uri" }
@@ -179,6 +197,18 @@ function Invoke-GraphAPI {
         return $response
     }
     catch {
+        $statusCode = $_.Exception.Response.StatusCode.value__
+        $errorMessage = $_.Exception.Message
+        Write-Log "Erro na API ($statusCode): $fullUri - $errorMessage" -Level "Error"
+        
+        # Retry logic for temporary errors
+        if ($statusCode -in 429, 503 -and $RetryCount -lt 3) {
+            $waitTime = [math]::Pow(2, $RetryCount) * 5  # Exponential backoff: 5s, 10s, 20s
+            Write-Log "Tentando novamente em $waitTime segundos devido a erro temporário (tentativa $($RetryCount + 1)/3)..." -Level "Warning"
+            Start-Sleep -Seconds $waitTime
+            return Invoke-GraphAPI -Uri $Uri -Method $Method -Beta:$Beta -RetryCount ($RetryCount + 1)
+        }
+        
         return $null
     }
 }
@@ -228,6 +258,8 @@ function Get-AllSharePointSettings {
 
 function Analyze-SharingSettings {
     param($Settings)
+    
+    if ($SkipSharingAnalysis) { return }
     
     Write-Log "Analisando Configurações de Compartilhamento Externo" -Level "Section"
     
@@ -434,16 +466,16 @@ function Add-ManualChecks {
     Write-Log "Adicionando verificações manuais" -Level "Section"
     
     $manualChecks = @(
-        @{ Category = "Compartilhamento"; Setting = "OneDriveSharingCapability"; Risk = "CRÍTICO"; Description = "Nível de compartilhamento do OneDrive"; Remediation = "SharePoint Admin > Policies > Sharing > OneDrive"; Impact = "OneDrive pode ser mais permissivo" }
-        @{ Category = "Links"; Setting = "FileAnonymousLinkType"; Risk = "ALTO"; Description = "Permissão de links anônimos de arquivos"; Remediation = "SharePoint Admin > Policies > Sharing"; Impact = "Links podem ter edição" }
-        @{ Category = "Links"; Setting = "FolderAnonymousLinkType"; Risk = "ALTO"; Description = "Permissão de links anônimos de pastas"; Remediation = "SharePoint Admin > Policies > Sharing"; Impact = "Links podem ter edição" }
-        @{ Category = "Sincronização"; Setting = "AllowedDomainListForSyncClient"; Risk = "ALTO"; Description = "Domínios permitidos para sync"; Remediation = "SharePoint Admin > Settings > OneDrive > Sync"; Impact = "Qualquer PC pode sincronizar" }
-        @{ Category = "Usuários Externos"; Setting = "RequireAcceptingAccountMatchInvitedAccount"; Risk = "ALTO"; Description = "Exigir conta igual ao convite"; Remediation = "SharePoint Admin > Policies > Sharing"; Impact = "Convites podem ser usados por outros" }
-        @{ Category = "Controle de Acesso"; Setting = "ConditionalAccessPolicy"; Risk = "ALTO"; Description = "Política para dispositivos não gerenciados"; Remediation = "SharePoint Admin > Access control > Unmanaged devices"; Impact = "Dispositivos pessoais com acesso total" }
-        @{ Category = "Controle de Acesso"; Setting = "IPAddressAllowList"; Risk = "MÉDIO"; Description = "Restrição por IP"; Remediation = "SharePoint Admin > Access control > Network location"; Impact = "Acesso de qualquer local" }
-        @{ Category = "Notificações"; Setting = "NotifyOwnersWhenItemsReshared"; Risk = "BAIXO"; Description = "Notificar recompartilhamento"; Remediation = "SharePoint Admin > Policies > Sharing"; Impact = "Sem visibilidade de reshare" }
-        @{ Category = "Storage"; Setting = "OrphanedPersonalSitesRetentionPeriod"; Risk = "MÉDIO"; Description = "Retenção de OneDrive órfão"; Remediation = "SharePoint Admin > Settings > OneDrive > Retention"; Impact = "Dados de ex-funcionários" }
-        @{ Category = "Integração"; Setting = "EnableAzureADB2BIntegration"; Risk = "BAIXO"; Description = "Integração Azure AD B2B"; Remediation = "SharePoint Admin > Policies > Sharing"; Impact = "Experiência de guest" }
+        @{ Category = "Compartilhamento"; Setting = "OneDriveSharingCapability"; Risk = "CRÍTICO"; Description = "Nível de compartilhamento do OneDrive"; Remediation = "SharePoint Admin > Policies > Sharing"; Impact = "Links públicos podem expor dados" }
+        @{ Category = "Links"; Setting = "FileAnonymousLinkType"; Risk = "ALTO"; Description = "Permissão de links anônimos de arquivos"; Remediation = "SharePoint Admin > Policies > Sharing"; Impact = "Arquivos podem ser acessados sem autenticação" }
+        @{ Category = "Links"; Setting = "FolderAnonymousLinkType"; Risk = "ALTO"; Description = "Permissão de links anônimos de pastas"; Remediation = "SharePoint Admin > Policies > Sharing"; Impact = "Pastas podem ser acessadas sem autenticação" }
+        @{ Category = "Sincronização"; Setting = "AllowedDomainListForSyncClient"; Risk = "ALTO"; Description = "Domínios permitidos para sync"; Remediation = "SharePoint Admin > Settings > OneDrive > Sync"; Impact = "Sincronização pode ocorrer de domínios não autorizados" }
+        @{ Category = "Usuários Externos"; Setting = "RequireAcceptingAccountMatchInvitedAccount"; Risk = "ALTO"; Description = "Exigir conta igual ao convite"; Remediation = "SharePoint Admin > Policies > Sharing"; Impact = "Usuários podem aceitar convites com contas diferentes" }
+        @{ Category = "Controle de Acesso"; Setting = "ConditionalAccessPolicy"; Risk = "ALTO"; Description = "Política para dispositivos não gerenciados"; Remediation = "SharePoint Admin > Access control > Apps"; Impact = "Dispositivos não gerenciados podem acessar dados" }
+        @{ Category = "Controle de Acesso"; Setting = "IPAddressAllowList"; Risk = "MÉDIO"; Description = "Restrição por IP"; Remediation = "SharePoint Admin > Access control > Network location"; Impact = "Acesso não restrito por localização de rede" }
+        @{ Category = "Notificações"; Setting = "NotifyOwnersWhenItemsReshared"; Risk = "BAIXO"; Description = "Notificar recompartilhamento"; Remediation = "SharePoint Admin > Policies > Sharing"; Impact = "Proprietários podem não ser notificados de recompartilhamentos" }
+        @{ Category = "Storage"; Setting = "OrphanedPersonalSitesRetentionPeriod"; Risk = "MÉDIO"; Description = "Retenção de OneDrive órfão"; Remediation = "SharePoint Admin > Settings > OneDrive > Storage"; Impact = "Dados órfãos podem permanecer por muito tempo" }
+        @{ Category = "Integração"; Setting = "EnableAzureADB2BIntegration"; Risk = "BAIXO"; Description = "Integração Azure AD B2B"; Remediation = "SharePoint Admin > Policies > Sharing"; Impact = "Integração B2B pode não estar otimizada" }
     )
     
     foreach ($check in $manualChecks) {
@@ -465,12 +497,18 @@ function Export-CompleteReport {
     }
     
     $findingsPath = Join-Path $OutputPath "OneDrive-Audit-Findings_$($script:Timestamp).csv"
-    $script:Findings | Export-Csv -Path $findingsPath -NoTypeInformation -Encoding UTF8
+    $script:Findings | Export-Csv -Path $findingsPath -NoTypeInformation -Encoding UTF8 -UseQuotes AsNeeded
     Write-Log "Findings: $findingsPath" -Level "Success"
     
     $settingsPath = Join-Path $OutputPath "OneDrive-Audit-AllSettings_$($script:Timestamp).csv"
-    $script:AllSettings | Export-Csv -Path $settingsPath -NoTypeInformation -Encoding UTF8
+    $script:AllSettings | Export-Csv -Path $settingsPath -NoTypeInformation -Encoding UTF8 -UseQuotes AsNeeded
     Write-Log "Settings: $settingsPath" -Level "Success"
+    
+    if ($ExportJson) {
+        $jsonPath = Join-Path $OutputPath "OneDrive-Audit-Findings_$($script:Timestamp).json"
+        $script:Findings | ConvertTo-Json -Depth 10 | Out-File -FilePath $jsonPath -Encoding UTF8
+        Write-Log "JSON: $jsonPath" -Level "Success"
+    }
     
     $htmlPath = Join-Path $OutputPath "OneDrive-Complete-Audit-Report_$($script:Timestamp).html"
     
@@ -489,7 +527,7 @@ function Export-CompleteReport {
             $bg = switch ($f.Risk) { "CRÍTICO" { "#dc3545" } "ALTO" { "#fd7e14" } "MÉDIO" { "#ffc107" } "BAIXO" { "#17a2b8" } default { "#6c757d" } }
             $txt = if ($f.Risk -in @("MÉDIO", "BAIXO")) { "#333" } else { "#fff" }
             
-            $findingsHtml += "<tr><td><span class='risk-badge' style='background:$bg;color:$txt;'>$($f.Risk)</span></td><td><strong>$($f.Setting)</strong></td><td><code>$($f.CurrentValue)</code></td><td><code>$($f.RecommendedValue)</code></td><td>$($f.Description)</td><td><div class='remediation'>$($f.Remediation)</div><div class='impact'>⚠️ $($f.Impact)</div></td></tr>"
+            $findingsHtml += "<tr><td><span class='risk-badge' style='background:$bg;color:$txt;'>$($f.Risk)</span></td><td><strong>$($f.Setting)</strong></td><td><code>$($f.CurrentValue)</code></td><td>$($f.RecommendedValue)</td><td>$($f.Description)</td><td>$($f.Remediation)</td></tr>"
         }
     }
     
@@ -573,12 +611,12 @@ function Export-CompleteReport {
             </ol>
         </div>
         
-        <footer>OneDrive Security Audit Script v5.0 - REST API Edition</footer>
+        <footer>OneDrive Security Audit Script v5.1.0 - Enhanced REST API Edition</footer>
     </div>
 </body>
 </html>
 "@
-    
+
     $html | Out-File -FilePath $htmlPath -Encoding UTF8
     Write-Log "Relatório HTML: $htmlPath" -Level "Success"
     
@@ -594,11 +632,11 @@ function Show-FinalSummary {
     $m = ($script:Findings | Where-Object { $_.Risk -eq "MÉDIO" }).Count
     $l = ($script:Findings | Where-Object { $_.Risk -eq "BAIXO" }).Count
     
-    Write-Host "`n╔═══════════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "║                    RESUMO DA AUDITORIA                                ║" -ForegroundColor Cyan
-    Write-Host "╠═══════════════════════════════════════════════════════════════════════╣" -ForegroundColor Cyan
-    Write-Host "║  🔴 CRÍTICOS: $($c.ToString().PadRight(4))    🟠 ALTOS: $($h.ToString().PadRight(4))    🟡 MÉDIOS: $($m.ToString().PadRight(4))    🔵 BAIXOS: $($l.ToString().PadRight(4)) ║" -ForegroundColor White
-    Write-Host "╚═══════════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+    Write-Host "`n╔══════════════════════════════════════════════════════════╗"
+    Write-Host "║                    RESUMO DA AUDITORIA                     ║" -ForegroundColor Cyan
+    Write-Host "╠═════════════════════════════════════════════════════════==═╣"
+    Write-Host "║  🔴 CRÍTICOS: $($c.ToString().PadRight(4))    🟠 ALTOS: $($h.ToString().PadRight(4))    🟡 MÉDIOS: $($m.ToString().PadRight(4))    🔵 BAIXOS: $($l.ToString().PadRight(4))    ║"
+    Write-Host "╚══════════════════════════════════════════════════════════╝"
     
     if ($c -gt 0) {
         Write-Host "`n⚠️  ATENÇÃO: $c findings CRÍTICOS requerem ação IMEDIATA!" -ForegroundColor Red
@@ -609,19 +647,13 @@ function Show-FinalSummary {
 #region Main
 Clear-Host
 Write-Host @"
-╔═══════════════════════════════════════════════════════════════════════╗
-║     AUDITORIA DE SEGURANÇA - ONEDRIVE FOR BUSINESS                   ║
-║     Versão 5.0 - REST API Edition (macOS/Windows/Linux)              ║
-╚═══════════════════════════════════════════════════════════════════════╝
+╔════════════════════════════════════════════════════════════════╗
+║     AUDITORIA DE SEGURANÇA - ONEDRIVE FOR BUSINESS             ║
+║     Versão 5.1.0 - Enhanced Edition (macOS/Windows/Linux)      ║
+╚════════════════════════════════════════════════════════════════╝
 "@ -ForegroundColor Cyan
 
 try {
-    if ([string]::IsNullOrEmpty($TenantName)) {
-        $TenantName = Read-Host "`nDigite o nome do tenant (ex: contoso)"
-    }
-    $TenantName = $TenantName -replace "\.onmicrosoft\.com$", ""
-    $TenantId = "$TenantName.onmicrosoft.com"
-    
     Write-Log "Tenant: $TenantName" -Level "Info"
     
     Write-Log "Iniciando autenticação" -Level "Section"
