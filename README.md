@@ -58,6 +58,8 @@ brew install powershell/tap/powershell
 
 ### Módulos PowerShell
 
+Os scripts Exchange v2.1+ **instalam módulos automaticamente** se necessário. Para instalação manual:
+
 ```powershell
 # Exchange Online Management
 Install-Module -Name ExchangeOnlineManagement -Force -AllowClobber
@@ -145,7 +147,9 @@ Checklist completo para aplicar correções de segurança no SharePoint Admin Ce
 
 ### 📧 Exchange Online
 
-#### `Exchange-Audit.ps1`
+> 📖 **Documentação completa:** [scripts/Exchange/README.md](scripts/Exchange/README.md)
+
+#### `Exchange-Audit.ps1` (v2.1)
 Auditoria completa do Exchange Online incluindo:
 - Verificação SPF, DKIM, DMARC
 - Análise de regras de transporte
@@ -153,18 +157,32 @@ Auditoria completa do Exchange Online incluindo:
 - Políticas anti-spam e anti-malware
 - Conectores e configurações de segurança
 
+**Novidades v2.1:**
+- ✅ Verificação automática de módulos (instala/atualiza automaticamente)
+- ✅ Limpeza de módulos duplicados (conflitos MSAL)
+- ✅ Mantém conexão ativa ao finalizar
+
 ```powershell
-# Execução básica
+# Execução básica (instala módulos automaticamente se necessário)
 ./scripts/Exchange/Exchange-Audit.ps1
 
-# Gera relatório HTML automaticamente
+# Apenas relatório
+./scripts/Exchange/Exchange-Audit.ps1 -ReportOnly
+
+# Especificar caminho do relatório
+./scripts/Exchange/Exchange-Audit.ps1 -ExportPath "C:\Reports\audit.csv"
 ```
 
-#### `Clean-InboxRules.ps1`
+#### `Clean-InboxRules.ps1` (v2.1)
 Identifica e remove regras de inbox problemáticas:
 - Regras com pastas deletadas
 - Regras com destinatários inexistentes
 - Regras potencialmente maliciosas
+
+**Novidades v2.1:**
+- ✅ Verificação automática de módulos (instala/atualiza automaticamente)
+- ✅ Limpeza de módulos duplicados (conflitos MSAL)
+- ✅ Mantém conexão ativa ao finalizar
 
 ```powershell
 # Apenas relatório (não remove nada)
@@ -175,6 +193,11 @@ Identifica e remove regras de inbox problemáticas:
 
 # Remoção automática de todas
 ./scripts/Exchange/Clean-InboxRules.ps1 -RemoveAll
+```
+
+**💡 Dica:** Os scripts v2.1 mantêm a conexão ativa. Para desconectar manualmente:
+```powershell
+Disconnect-ExchangeOnline -Confirm:$false
 ```
 
 ---
@@ -324,12 +347,11 @@ chmod +x ./scripts/DNS/check-dns.sh
 # 1. Auditoria OneDrive/SharePoint (não requer módulos)
 ./scripts/OneDrive/OneDrive-Complete-Audit.ps1 -TenantName "contoso"
 
-# 2. Conectar aos serviços Exchange
-Connect-ExchangeOnline
-Connect-IPPSSession
-
-# 3. Executar auditoria do Exchange
+# 2. Executar auditoria do Exchange (módulos instalados automaticamente)
 ./scripts/Exchange/Exchange-Audit.ps1
+
+# 3. Conectar ao Purview
+Connect-IPPSSession
 
 # 4. Executar auditoria do Purview
 ./scripts/Purview/Purview-Audit-PS7.ps1
@@ -465,8 +487,12 @@ Contribuições são bem-vindas! Por favor:
 - 🔧 REST API pura - Compatível com macOS/Windows/Linux sem módulos adicionais
 
 ### v2.1 - Janeiro 2026
+- 🔧 `Exchange-Audit.ps1` - Verificação automática de módulos, mantém conexão ativa
+- 🔧 `Clean-InboxRules.ps1` - Verificação automática de módulos, mantém conexão ativa
+- 🧹 Limpeza automática de módulos duplicados (conflitos MSAL)
 - ✨ Novo: Script de rotação Kerberos para Seamless SSO
 - 📁 Nova pasta: HybridIdentity
+- 📖 Nova documentação: `scripts/Exchange/README.md`
 
 ### v2.0 - Janeiro 2026
 - ✨ Compatibilidade com PowerShell 7 (Mac/Linux)
