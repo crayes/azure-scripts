@@ -13,7 +13,9 @@
 .AUTHOR
     M365 Security Toolkit
 .VERSION
-    2.0 - Janeiro 2026
+    2.1 - Janeiro 2026
+    - Adicionada verificação e correção automática de módulos
+    - Removida desconexão automática no final
 .EXAMPLE
     ./Exchange-Audit.ps1
 #>
@@ -68,6 +70,158 @@ function Write-Check {
 }
 
 # ============================================
+# VERIFICAÇÃO E CORREÇÃO DE MÓDULOS
+# ============================================
+
+function Test-AndFixModules {
+    Write-Section "🔧  VERIFICAÇÃO DE MÓDULOS"
+    
+    $ModulesToCheck = @(
+        "ExchangeOnlineManagement"
+    )
+    
+    $ModulesFixed = $false
+    
+    foreach ($ModuleName in $ModulesToCheck) {
+        Write-Host ""
+        Write-Host "  📦 Verificando módulo: $ModuleName" -ForegroundColor Yellow
+        
+        # Obter todas as versões instaladas
+        $InstalledVersions = Get-Module -ListAvailable -Name $ModuleName -ErrorAction SilentlyContinue | 
+            Sort-Object Version -Descending
+        
+        if (-not $InstalledVersions) {
+            # Módulo não instalado - instalar
+            Write-Check "Módulo não encontrado" "Instalando..." "WARNING"
+            try {
+                Install-Module -Name $ModuleName -Force -AllowClobber -Scope CurrentUser -ErrorAction Stop
+                Write-Check "Módulo instalado com sucesso" "" "OK"
+                $ModulesFixed = $true
+            }
+            catch {
+                Write-Check "Erro ao instalar módulo" $_.Exception.Message "ERROR"
+                Write-Host ""
+                Write-Host "  ⚠️ Execute manualmente: Install-Module $ModuleName -Force" -ForegroundColor Yellow
+            }
+        }
+        elseif ($InstalledVersions.Count -gt 1) {
+            # Múltiplas versões - remover antigas e manter a mais nova
+            $LatestVersion = $InstalledVersions[0]
+            $OldVersions = $InstalledVersions | Select-Object -Skip 1
+            
+            Write-Check "Versão atual" $LatestVersion.Version.ToString() "OK"
+            Write-Check "Versões duplicadas encontradas" "$($OldVersions.Count) versão(ões) antiga(s)" "WARNING"
+            
+            foreach ($OldVersion in $OldVersions) {
+                Write-Host "     Removendo versão $($OldVersion.Version)..." -ForegroundColor Gray
+                try {
+                    $ModulePath = $OldVersion.ModuleBase
+                    if (Test-Path $ModulePath) {
+                        Remove-Item -Path $ModulePath -Recurse -Force -ErrorAction Stop
+                        Write-Host "     ✅ Removida: $($OldVersion.Version)" -ForegroundColor Green
+                        $ModulesFixed = $true
+                    }
+                }
+                catch {
+                    Write-Host "     ❌ Erro ao remover $($OldVersion.Version): $_" -ForegroundColor Red
+                }
+            }
+        }
+        else {
+            # Apenas uma versão instalada - OK
+            Write-Check "Versão instalada" $InstalledVersions[0].Version.ToString() "OK"
+        }
+        
+        # Verificar se há atualização disponível
+        try {
+            $OnlineVersion = Find-Module -Name $ModuleName -ErrorAction SilentlyContinue
+            $CurrentVersion = (Get-Module -ListAvailable -Name $ModuleName | Sort-Object Version -Descending | Select-Object -First 1).Version
+            
+            if ($OnlineVersion -and $CurrentVersion -and $OnlineVersion.Version -gt $CurrentVersion) {
+                Write-Check "Atualização disponível" "v$($OnlineVersion.Version) (atual: v$CurrentVersion)" "INFO"
+                Write-Host "     Atualizando módulo..." -ForegroundColor Gray
+                try {
+                    Update-Module -Name $ModuleName -Force -ErrorAction Stop
+                    Write-Check "Módulo atualizado com sucesso" "" "OK"
+                    $ModulesFixed = $true
+                }
+                catch {
+                    Write-Host "     ⚠️ Não foi possível atualizar automaticamente" -ForegroundColor Yellow
+                }
+            }
+        }
+        catch {
+            # Ignorar erros ao verificar atualizações online
+        }
+    }
+    
+    # Verificar e limpar módulos Microsoft.Graph duplicados (causa conflito de MSAL)
+    Write-Host ""
+    Write-Host "  📦 Verificando módulos Microsoft.Graph (conflito MSAL)..." -ForegroundColor Yellow
+    
+    $GraphModules = Get-Module -ListAvailable -Name "Microsoft.Graph*" -ErrorAction SilentlyContinue | 
+        Group-Object Name
+    
+    foreach ($ModuleGroup in $GraphModules) {
+        $Versions = $ModuleGroup.Group | Sort-Object Version -Descending
+        
+        if ($Versions.Count -gt 1) {
+            $LatestVersion = $Versions[0]
+            $OldVersions = $Versions | Select-Object -Skip 1
+            
+            Write-Host "     $($ModuleGroup.Name): $($Versions.Count) versões encontradas" -ForegroundColor Gray
+            
+            foreach ($OldVersion in $OldVersions) {
+                try {
+                    $ModulePath = $OldVersion.ModuleBase
+                    if (Test-Path $ModulePath) {
+                        Remove-Item -Path $ModulePath -Recurse -Force -ErrorAction Stop
+                        Write-Host "     ✅ Removida: $($ModuleGroup.Name) v$($OldVersion.Version)" -ForegroundColor Green
+                        $ModulesFixed = $true
+                    }
+                }
+                catch {
+                    # Silenciar erros de remoção de módulos Graph
+                }
+            }
+        }
+    }
+    
+    # Verificar Az.Accounts duplicados (também causa conflito)
+    $AzModules = Get-Module -ListAvailable -Name "Az.Accounts" -ErrorAction SilentlyContinue | 
+        Sort-Object Version -Descending
+    
+    if ($AzModules.Count -gt 1) {
+        Write-Host ""
+        Write-Host "  📦 Verificando módulo Az.Accounts..." -ForegroundColor Yellow
+        
+        $OldAzVersions = $AzModules | Select-Object -Skip 1
+        
+        foreach ($OldVersion in $OldAzVersions) {
+            try {
+                $ModulePath = $OldVersion.ModuleBase
+                if (Test-Path $ModulePath) {
+                    Remove-Item -Path $ModulePath -Recurse -Force -ErrorAction Stop
+                    Write-Host "     ✅ Removida: Az.Accounts v$($OldVersion.Version)" -ForegroundColor Green
+                    $ModulesFixed = $true
+                }
+            }
+            catch {
+                # Silenciar erros
+            }
+        }
+    }
+    
+    if ($ModulesFixed) {
+        Write-Host ""
+        Write-Check "Módulos corrigidos" "Reinicie o PowerShell se houver erros de carregamento" "INFO"
+    }
+    
+    Write-Host ""
+    Write-Check "Verificação de módulos concluída" "" "OK"
+}
+
+# ============================================
 # INÍCIO
 # ============================================
 
@@ -78,7 +232,11 @@ Write-Host "║  📧 AUDITORIA COMPLETA DO EXCHANGE ONLINE                     
 Write-Host "╚═══════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
 Write-Host ""
 
+# Verificar e corrigir módulos antes de conectar
+Test-AndFixModules
+
 # Conectar
+Write-Host ""
 Write-Host "Conectando ao Exchange Online..." -ForegroundColor White
 try {
     Connect-ExchangeOnline -ShowBanner:$false
@@ -422,11 +580,13 @@ if ($Results.Findings.Count -gt 0) {
 Write-Host ""
 Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
 
-# Desconectar
-Write-Host ""
-Write-Host "Desconectando..." -ForegroundColor Gray
-Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue
+# ============================================
+# FINALIZAÇÃO (SEM DESCONEXÃO)
+# ============================================
 
 Write-Host ""
 Write-Host "✅ Auditoria concluída!" -ForegroundColor Green
+Write-Host ""
+Write-Host "  ℹ️ Conexão mantida. Para desconectar manualmente:" -ForegroundColor Cyan
+Write-Host "     Disconnect-ExchangeOnline -Confirm:`$false" -ForegroundColor Gray
 Write-Host ""
