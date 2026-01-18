@@ -41,6 +41,8 @@ Este toolkit foi desenvolvido para administradores de TI que gerenciam múltiplo
 | Limpeza de dispositivos | `Remove-InactiveDevices.ps1` |
 | Ambiente VDI | `Remove-InactiveDevices-AzureAutomation.ps1` |
 | Manutenção Hybrid Identity | `Rotate-KerberosKey-SSO.ps1` |
+| **Análise de Conditional Access** | `Analyze-CA-Policies.ps1` |
+| **Troubleshooting erro 53003** | `Analyze-CA-Policies.ps1` |
 
 ---
 
@@ -64,7 +66,7 @@ Os scripts Exchange v2.1+ **instalam módulos automaticamente** se necessário. 
 # Exchange Online Management
 Install-Module -Name ExchangeOnlineManagement -Force -AllowClobber
 
-# Microsoft Graph (para scripts de dispositivos)
+# Microsoft Graph (para scripts de dispositivos e Conditional Access)
 Install-Module -Name Microsoft.Graph -Force -AllowClobber
 
 # Verificar instalação
@@ -84,6 +86,7 @@ Get-InstalledModule ExchangeOnlineManagement, Microsoft.Graph
 | Remove-InactiveDevices.ps1 | Cloud Device Administrator |
 | Rotate-KerberosKey-SSO.ps1 | Global Admin ou Hybrid Identity Admin + Domain Admin local |
 | OneDrive-Complete-Audit.ps1 | SharePoint Administrator ou Global Admin |
+| **Analyze-CA-Policies.ps1** | **Policy.Read.All, Directory.Read.All** |
 
 ---
 
@@ -248,7 +251,64 @@ Aplica configurações de segurança recomendadas:
 
 ---
 
-### 💻 Entra ID / Dispositivos
+### 💻 Entra ID / Dispositivos / Conditional Access
+
+#### `Analyze-CA-Policies.ps1` ⭐ NOVO
+Análise detalhada de todas as políticas de Conditional Access do tenant:
+
+- Lista todas as políticas com estado (Ativo/Desativado/Report-Only)
+- Mostra ações de cada política (Block, MFA, Compliant Device, etc.)
+- Exibe apps e usuários incluídos/excluídos
+- Lista Named Locations (países e IP ranges)
+- Identifica condições de risco (Sign-in Risk, User Risk)
+- Mostra Client App Types e Session Controls
+
+**Ideal para:**
+- 🔍 Troubleshooting de erro **53003 (BlockedByConditionalAccess)**
+- 📋 Documentação de políticas existentes
+- 🧹 Identificação de políticas duplicadas ou conflitantes
+- ✅ Auditoria de segurança do tenant
+
+```powershell
+# Execução básica
+./scripts/EntraID/Analyze-CA-Policies.ps1 -TenantId "contoso.onmicrosoft.com"
+
+# Usando Tenant ID (GUID)
+./scripts/EntraID/Analyze-CA-Policies.ps1 -TenantId "12345678-1234-1234-1234-123456789012"
+```
+
+**Saída de exemplo:**
+```
+=== Análise de Conditional Access Policies ===
+Tenant: contoso.onmicrosoft.com
+
+Total de políticas: 10
+
+[1] Require MFA for all users
+    ID: 4ee6bf9b-4365-44bf-9fbd-3ecfeb7a2e2a
+    Estado: ATIVO
+    AÇÃO: Exige MFA
+    Apps incluídos: TODOS OS APPS
+    Usuários: TODOS
+    Localizações excluídas: Rede Corporativa
+
+[2] Block legacy authentication
+    Estado: ATIVO
+    AÇÃO: BLOQUEIA acesso
+    Client Apps: Exchange ActiveSync (Legacy), Outros (Legacy)
+
+========================================
+NAMED LOCATIONS
+========================================
+• Rede Corporativa
+  Tipo: IP Ranges
+    - 10.0.0.0/8
+    - 192.168.0.0/16
+```
+
+**Permissões necessárias:**
+- `Policy.Read.All`
+- `Directory.Read.All`
 
 #### `Remove-InactiveDevices.ps1`
 Gerenciamento de dispositivos inativos no Entra ID:
@@ -344,28 +404,53 @@ chmod +x ./scripts/DNS/check-dns.sh
 ### Primeira Execução em Novo Tenant
 
 ```powershell
-# 1. Auditoria OneDrive/SharePoint (não requer módulos)
+# 1. Analisar políticas de Conditional Access existentes
+./scripts/EntraID/Analyze-CA-Policies.ps1 -TenantId "contoso.onmicrosoft.com"
+
+# 2. Auditoria OneDrive/SharePoint (não requer módulos)
 ./scripts/OneDrive/OneDrive-Complete-Audit.ps1 -TenantName "contoso"
 
-# 2. Executar auditoria do Exchange (módulos instalados automaticamente)
+# 3. Executar auditoria do Exchange (módulos instalados automaticamente)
 ./scripts/Exchange/Exchange-Audit.ps1
 
-# 3. Conectar ao Purview
+# 4. Conectar ao Purview
 Connect-IPPSSession
 
-# 4. Executar auditoria do Purview
+# 5. Executar auditoria do Purview
 ./scripts/Purview/Purview-Audit-PS7.ps1
 
-# 5. Revisar relatórios gerados
+# 6. Revisar relatórios gerados
 
-# 6. Aplicar remediações do Exchange
+# 7. Aplicar remediações do Exchange
 ./scripts/Remediation/M365-Remediation.ps1
 
-# 7. Aplicar remediações do OneDrive (manual)
+# 8. Aplicar remediações do OneDrive (manual)
 # Seguir REMEDIATION-CHECKLIST.md no SharePoint Admin Center
 
-# 8. Desconectar
+# 9. Desconectar
 Disconnect-ExchangeOnline -Confirm:$false
+```
+
+### Troubleshooting Erro 53003 (BlockedByConditionalAccess)
+
+```powershell
+# 1. Analisar todas as políticas do tenant
+./scripts/EntraID/Analyze-CA-Policies.ps1 -TenantId "contoso.onmicrosoft.com"
+
+# 2. Identificar políticas que podem estar bloqueando:
+#    - Políticas com AÇÃO: BLOQUEIA acesso
+#    - Políticas de geo-fencing (Named Locations com países)
+#    - Políticas que bloqueiam legacy auth (Exchange ActiveSync)
+#    - Políticas que exigem dispositivo gerenciado
+
+# 3. Verificar o IP do usuário
+# (Invoke-RestMethod -Uri "http://ip-api.com/json/IP_DO_USUARIO").country
+
+# 4. Causas comuns do erro 53003:
+#    - VPN roteando por país não permitido
+#    - Apple Mail usando Exchange ActiveSync (legacy auth)
+#    - Dispositivo não registrado no Intune
+#    - iCloud Private Relay ativo
 ```
 
 ### Auditoria Completa de OneDrive
@@ -432,7 +517,8 @@ Disconnect-ExchangeOnline -Confirm:$false
     Exchange-Audit      Revisar JSON/CSV     M365-Remediation
     Purview-Audit       Priorizar issues     Clean-InboxRules
     OneDrive-Audit      Documentar gaps      SPO Admin Center
-    check-dns.sh                             Remove-Devices
+    CA-Policies-Audit   Analyze-CA output    Remove-Devices
+    check-dns.sh                             
            │                    │                    │
            └────────────────────┼────────────────────┘
                                ▼
@@ -463,6 +549,7 @@ Disconnect-ExchangeOnline -Confirm:$false
 | Seamless SSO | Azure AD Free (com AD Connect) |
 | OneDrive for Business | Microsoft 365 Business Basic+ |
 | SharePoint Admin | Microsoft 365 Business Basic+ |
+| **Conditional Access** | **Entra ID P1/P2 ou Microsoft 365 E3/E5** |
 
 ---
 
@@ -479,6 +566,13 @@ Contribuições são bem-vindas! Por favor:
 ---
 
 ## 📝 Changelog
+
+### v2.3 - Janeiro 2026
+- ✨ **Novo:** `Analyze-CA-Policies.ps1` - Análise detalhada de Conditional Access
+- 🔍 Ferramenta para troubleshooting de erro 53003
+- 📋 Lista políticas, Named Locations, Grant Controls e Session Controls
+- 🎨 Output colorido com estados (Ativo/Desativado/Report-Only)
+- 📖 Documentação atualizada com guia de troubleshooting
 
 ### v2.2 - Janeiro 2026
 - ✨ Novo: `OneDrive-Complete-Audit.ps1` - Auditoria de segurança do OneDrive/SharePoint
