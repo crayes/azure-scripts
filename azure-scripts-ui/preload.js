@@ -1,92 +1,85 @@
 /**
- * Preload Script - Ponte segura entre main e renderer
+ * Preload Script - Ponte segura entre Main e Renderer
  * 
- * Este script expõe APIs seguras para o renderer process usando contextBridge.
- * O renderer NÃO tem acesso direto ao Node.js, apenas às funções expostas aqui.
+ * Este arquivo expõe uma API controlada para o renderer process
+ * usando contextBridge. O renderer NÃO tem acesso direto ao Node.js.
  */
 
 const { contextBridge, ipcRenderer } = require('electron');
 
-// Expor API segura para o renderer
+// API exposta para o renderer (window.electronAPI)
 contextBridge.exposeInMainWorld('electronAPI', {
-  // ==================== Scripts PowerShell ====================
+  
+  // ==================== Scripts ====================
+  
+  /**
+   * Obter lista de scripts disponíveis
+   * @returns {Promise<Array<{name, category, path, relativePath}>>}
+   */
+  getScripts: () => ipcRenderer.invoke('get-scripts'),
   
   /**
    * Executar um script PowerShell
-   * @param {string} scriptPath - Caminho relativo do script (ex: 'scripts/Exchange/Exchange-Audit.ps1')
-   * @param {string[]} args - Argumentos para o script
-   * @returns {Promise<{success: boolean, stdout: string, stderr: string, code: number}>}
+   * @param {string} scriptPath - Caminho completo do script
+   * @param {string[]} args - Argumentos opcionais
+   * @returns {Promise<{exitCode, stdout, stderr, success}>}
    */
-  executeScript: (scriptPath, args = []) => {
-    return ipcRenderer.invoke('execute-script', scriptPath, args);
-  },
-
+  runScript: (scriptPath, args = []) => ipcRenderer.invoke('run-script', scriptPath, args),
+  
   /**
-   * Verificar se PowerShell está disponível
-   * @returns {Promise<{available: boolean, version: string|null, executable: string}>}
+   * Ler conteúdo de um script
+   * @param {string} scriptPath - Caminho do script
+   * @returns {Promise<string>}
    */
-  checkPowerShell: () => {
-    return ipcRenderer.invoke('check-powershell');
-  },
-
+  readScript: (scriptPath) => ipcRenderer.invoke('read-script', scriptPath),
+  
   /**
-   * Listar scripts disponíveis no repositório
-   * @returns {Promise<Array<{name: string, category: string, path: string, fullPath: string}>>}
-   */
-  listScripts: () => {
-    return ipcRenderer.invoke('list-scripts');
-  },
-
-  // ==================== Sistema de Arquivos ====================
-
-  /**
-   * Abrir diálogo para selecionar pasta de output
-   * @returns {Promise<string|null>}
-   */
-  selectOutputFolder: () => {
-    return ipcRenderer.invoke('select-output-folder');
-  },
-
-  /**
-   * Abrir arquivo ou pasta no explorador do sistema
-   * @param {string} filePath - Caminho do arquivo/pasta
-   * @returns {Promise<boolean>}
-   */
-  openPath: (filePath) => {
-    return ipcRenderer.invoke('open-path', filePath);
-  },
-
-  // ==================== Informações do Sistema ====================
-
-  /**
-   * Obter informações do sistema
-   * @returns {Promise<{platform: string, arch: string, nodeVersion: string, electronVersion: string, appVersion: string, appPath: string}>}
-   */
-  getSystemInfo: () => {
-    return ipcRenderer.invoke('get-system-info');
-  },
-
-  // ==================== Eventos em Tempo Real ====================
-
-  /**
-   * Registrar callback para output de scripts em tempo real
-   * @param {function} callback - Função chamada com {type: 'stdout'|'stderr', data: string}
-   * @returns {function} - Função para remover o listener
+   * Registrar callback para output em tempo real
+   * @param {Function} callback - Função chamada com {type, data}
+   * @returns {Function} - Função para remover listener
    */
   onScriptOutput: (callback) => {
     const handler = (event, data) => callback(data);
     ipcRenderer.on('script-output', handler);
-    // Retornar função para cleanup
     return () => ipcRenderer.removeListener('script-output', handler);
   },
-
-  // ==================== Versões ====================
+  
+  // ==================== Sistema ====================
+  
+  /**
+   * Obter informações do sistema
+   * @returns {Promise<{platform, arch, nodeVersion, electronVersion, powershell, homeDir, hostname}>}
+   */
+  getSystemInfo: () => ipcRenderer.invoke('get-system-info'),
+  
+  /**
+   * Verificar se PowerShell está disponível
+   * @returns {Promise<{available, executable, version}>}
+   */
+  checkPowerShell: () => ipcRenderer.invoke('check-powershell'),
+  
+  // ==================== Diálogos ====================
+  
+  /**
+   * Abrir diálogo para selecionar arquivo
+   * @param {Object} options - Opções do diálogo
+   * @returns {Promise<string|null>}
+   */
+  selectFile: (options) => ipcRenderer.invoke('select-file', options),
+  
+  /**
+   * Abrir diálogo para selecionar diretório
+   * @returns {Promise<string|null>}
+   */
+  selectDirectory: () => ipcRenderer.invoke('select-directory'),
+  
+  // ==================== Versões (acesso síncrono) ====================
   
   versions: {
     node: process.versions.node,
     electron: process.versions.electron,
-    chrome: process.versions.chrome
+    chrome: process.versions.chrome,
   }
 });
 
-console.log('Preload script loaded - electronAPI exposed to renderer');
+console.log('✅ Preload carregado - electronAPI disponível no renderer');
