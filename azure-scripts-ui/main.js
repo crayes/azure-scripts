@@ -17,7 +17,6 @@ function createWindow() {
       nodeIntegration: true,
       contextIsolation: false,
     },
-    icon: path.join(__dirname, 'assets', 'icon.png'),
   });
 
   // Load the index.html of the app.

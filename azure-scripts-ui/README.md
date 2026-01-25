@@ -179,7 +179,26 @@ npm install node-powershell
 
 ## 📝 Notas Importantes
 
-1. **Node Integration**: Esta aplicação usa `nodeIntegration: true` para facilitar o desenvolvimento inicial. Para produção, considere usar `contextBridge` para maior segurança.
+1. **Node Integration & Security**: Esta aplicação usa `nodeIntegration: true` e `contextIsolation: false` para facilitar o desenvolvimento inicial. 
+   
+   ⚠️ **Importante para Produção**: Antes de usar em produção, implemente `contextBridge` com `contextIsolation: true` para evitar vulnerabilidades de segurança (XSS). Exemplo:
+   
+   ```javascript
+   // preload.js
+   const { contextBridge } = require('electron');
+   const { exec } = require('child_process');
+   
+   contextBridge.exposeInMainWorld('api', {
+     runScript: (scriptPath) => {
+       return new Promise((resolve, reject) => {
+         exec(`pwsh -File ${scriptPath}`, (error, stdout, stderr) => {
+           if (error) reject(error);
+           else resolve(stdout);
+         });
+       });
+     }
+   });
+   ```
 
 2. **Content Security Policy**: Já configurado no HTML para proteger contra XSS.
 

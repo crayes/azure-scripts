@@ -16,13 +16,13 @@ document.addEventListener('DOMContentLoaded', () => {
   console.log('Electron version:', electronVersion);
   console.log('Node.js version:', nodeVersion);
   console.log('Platform:', process.platform);
-});
 
-// Add feature card interactions
-const featureCards = document.querySelectorAll('.feature-card');
-featureCards.forEach(card => {
-  card.addEventListener('click', () => {
-    console.log('Feature clicked:', card.querySelector('h4').textContent);
-    // TODO: Implement feature-specific actions
+  // Add feature card interactions
+  const featureCards = document.querySelectorAll('.feature-card');
+  featureCards.forEach(card => {
+    card.addEventListener('click', () => {
+      console.log('Feature clicked:', card.querySelector('h4').textContent);
+      // TODO: Implement feature-specific actions
+    });
   });
 });
