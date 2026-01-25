@@ -10,7 +10,7 @@
 .AUTHOR
     M365 Security Toolkit
 .VERSION
-    1.0 - Janeiro 2026
+    1.1 - Janeiro 2026
 .EXAMPLE
     $Capabilities = .\Get-TenantCapabilities.ps1
     if ($Capabilities.DLP.Available) { # executa DLP }
@@ -50,7 +50,7 @@ function Write-CapabilityBanner {
 ║                                                                          ║
 ║   🔍 DETECÇÃO DE CAPACIDADES DO TENANT                                   ║
 ║                                                                          ║
-║   Versão 1.0 - Janeiro 2026                                              ║
+║   Versão 1.1 - Janeiro 2026                                              ║
 ║                                                                          ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 
@@ -109,17 +109,43 @@ function Test-Connections {
         $Result.Errors += "Exchange Online não conectado"
     }
     
-    # Test Security & Compliance
-    try {
-        $null = Get-RetentionCompliancePolicy -ResultSize 1 -ErrorAction Stop -WarningAction SilentlyContinue
+    # Test Security & Compliance - múltiplos métodos
+    # Método 1: Verificar se o módulo IPPS tem sessão ativa
+    $IPPSSession = Get-PSSession | Where-Object { 
+        $_.ConfigurationName -eq "Microsoft.Exchange" -and 
+        $_.ComputerName -match "compliance|protection" -and
+        $_.State -eq "Opened"
+    }
+    
+    if ($IPPSSession) {
         $Result.SecurityCompliance = $true
     }
-    catch {
-        try {
-            $null = Get-Label -ResultSize 1 -ErrorAction Stop -WarningAction SilentlyContinue
-            $Result.SecurityCompliance = $true
+    else {
+        # Método 2: Tentar comando que sempre existe no IPPS
+        $TestCommands = @(
+            { Get-ComplianceSearch -ResultSize 1 -ErrorAction Stop -WarningAction SilentlyContinue },
+            { Get-RetentionCompliancePolicy -ResultSize 1 -ErrorAction Stop -WarningAction SilentlyContinue },
+            { Get-DlpCompliancePolicy -ResultSize 1 -ErrorAction Stop -WarningAction SilentlyContinue },
+            { Get-ProtectionAlert -ResultSize 1 -ErrorAction Stop -WarningAction SilentlyContinue }
+        )
+        
+        foreach ($TestCmd in $TestCommands) {
+            try {
+                $null = & $TestCmd
+                $Result.SecurityCompliance = $true
+                break
+            }
+            catch {
+                # Se o erro for de licença, ainda assim está conectado
+                if ($_.Exception.Message -match "not licensed|license|UnauthorizedAccess") {
+                    $Result.SecurityCompliance = $true
+                    break
+                }
+                # Continua tentando próximo comando
+            }
         }
-        catch {
+        
+        if (-not $Result.SecurityCompliance) {
             $Result.Errors += "Security & Compliance não conectado"
         }
     }
@@ -711,7 +737,7 @@ function Get-AllCapabilities {
         RemediableItems = Get-RemediableItems -Capabilities $Capabilities
         ConnectionStatus = $Connections
         GeneratedAt = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-        ScriptVersion = "1.0"
+        ScriptVersion = "1.1"
     }
     
     Show-CapabilitiesSummary -TenantInfo $TenantInfo -Capabilities $Capabilities -License $License
