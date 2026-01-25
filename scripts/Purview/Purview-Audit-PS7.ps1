@@ -2,9 +2,15 @@
 .SYNOPSIS
     Script de Auditoria Completa do Microsoft Purview
 .DESCRIPTION
-    Versão 3.1 - Compatível com PowerShell 7 (Mac/Linux/Windows)
+    Versão 4.0 - Integrado com Get-TenantCapabilities.ps1
     
-    Audita:
+    NOVIDADES v4.0:
+    - Detecção automática de capacidades/licenças do tenant
+    - Score calculado apenas com recursos DISPONÍVEIS
+    - Pula seções não licenciadas automaticamente
+    - Relatório claro do que foi auditado vs pulado
+    
+    Audita (conforme licença):
     - Políticas DLP (Data Loss Prevention)
     - Unified Audit Log (método atualizado 2025+)
     - Políticas de Retenção
@@ -13,18 +19,17 @@
     - Insider Risk Management
     - eDiscovery Cases
     - Communication Compliance
-    - Information Barriers
-    - Records Management
     - Compartilhamento Externo
     
 .AUTHOR
     M365 Security Toolkit - RFAA
 .VERSION
-    3.1 - Janeiro 2026 - Correcao de cores para terminais escuros
+    4.0 - Janeiro 2026 - Integração com TenantCapabilities
 .EXAMPLE
     ./Purview-Audit-PS7.ps1
     ./Purview-Audit-PS7.ps1 -OutputPath "./MeuRelatorio" -IncludeDetails
     ./Purview-Audit-PS7.ps1 -SkipConnection  # Se já estiver conectado
+    ./Purview-Audit-PS7.ps1 -SkipCapabilityCheck  # Pula detecção automática
 #>
 
 [CmdletBinding()]
@@ -32,6 +37,7 @@ param(
     [string]$OutputPath = "./Purview-Audit-Report",
     [switch]$IncludeDetails,
     [switch]$SkipConnection,
+    [switch]$SkipCapabilityCheck,
     [switch]$GenerateHTML
 )
 
@@ -45,7 +51,7 @@ $OutputFolder = "${OutputPath}_${ReportDate}"
 # ============================================
 
 $Script:Config = @{
-    Version = "3.1"
+    Version = "4.0"
     MinDLPPolicies = 3
     MinRetentionPolicies = 2
     MinSensitivityLabels = 5
@@ -61,10 +67,13 @@ $Script:Scores = @{
     AlertPolicies = 0
     InsiderRisk = 0
     eDiscovery = 0
-    InformationBarriers = 0
     CommunicationCompliance = 0
     ExternalSharing = 0
 }
+
+# Capabilities do tenant (preenchido na inicialização)
+$Script:TenantCaps = $null
+$Script:SkippedCategories = @()
 
 # ============================================
 # FUNÇÕES DE INTERFACE
@@ -84,7 +93,7 @@ function Write-Banner {
 ║                                                                          ║
 ║   🛡️  AUDITORIA COMPLETA DE SEGURANÇA E COMPLIANCE                       ║
 ║                                                                          ║
-║   Versão 3.1 - Janeiro 2026                                              ║
+║   Versão 4.0 - Janeiro 2026 (com detecção de capacidades)                ║
 ║   PowerShell 7 Compatible (Windows/macOS/Linux)                          ║
 ║                                                                          ║
 ╚══════════════════════════════════════════════════════════════════════════╝
@@ -106,11 +115,10 @@ function Write-Section {
 function Write-Status {
     param(
         [string]$Message,
-        [ValidateSet("Info", "Success", "Warning", "Error", "Header", "Detail")]
+        [ValidateSet("Info", "Success", "Warning", "Error", "Header", "Detail", "Skip")]
         [string]$Type = "Info"
     )
     
-    # Cores otimizadas para terminais com fundo escuro
     $Config = switch ($Type) {
         "Success" { @{ Color = "Green";   Prefix = "  ✅" } }
         "Warning" { @{ Color = "Yellow";  Prefix = "  ⚠️ " } }
@@ -118,6 +126,7 @@ function Write-Status {
         "Info"    { @{ Color = "White";   Prefix = "  📋" } }
         "Header"  { @{ Color = "Cyan";    Prefix = "  🔍" } }
         "Detail"  { @{ Color = "Gray";    Prefix = "     •" } }
+        "Skip"    { @{ Color = "DarkGray"; Prefix = "  ⏭️ " } }
         default   { @{ Color = "White";   Prefix = "  " } }
     }
     
@@ -128,8 +137,16 @@ function Write-Score {
     param(
         [string]$Category,
         [int]$Score,
-        [int]$MaxScore = 100
+        [int]$MaxScore = 100,
+        [bool]$Skipped = $false
     )
+    
+    if ($Skipped) {
+        Write-Host "  $Category" -NoNewline -ForegroundColor DarkGray
+        Write-Host " [░░░░░░░░░░░░░░░░░░░░] " -NoNewline -ForegroundColor DarkGray
+        Write-Host "N/A (não licenciado)" -ForegroundColor DarkGray
+        return
+    }
     
     $Percentage = [math]::Round(($Score / $MaxScore) * 100)
     $BarLength = 20
@@ -151,6 +168,68 @@ function Initialize-OutputFolder {
     if (-not (Test-Path $OutputFolder)) {
         New-Item -ItemType Directory -Path $OutputFolder -Force | Out-Null
     }
+}
+
+# ============================================
+# DETECÇÃO DE CAPACIDADES
+# ============================================
+
+function Initialize-TenantCapabilities {
+    Write-Section "DETECTANDO CAPACIDADES DO TENANT"
+    
+    # Tentar carregar o módulo
+    $ModulePath = Join-Path $PSScriptRoot "..\Modules\Get-TenantCapabilities.ps1"
+    if (-not (Test-Path $ModulePath)) {
+        $ModulePath = Join-Path $PSScriptRoot "Get-TenantCapabilities.ps1"
+    }
+    if (-not (Test-Path $ModulePath)) {
+        # Tentar no diretório atual
+        $ModulePath = "./Get-TenantCapabilities.ps1"
+    }
+    
+    if (Test-Path $ModulePath) {
+        Write-Status "Carregando módulo de detecção..." "Header"
+        try {
+            $Script:TenantCaps = & $ModulePath -Silent
+            
+            if ($Script:TenantCaps) {
+                Write-Status "Tenant: $($Script:TenantCaps.TenantInfo.DisplayName)" "Success"
+                Write-Status "Licença detectada: $($Script:TenantCaps.License.Probable)" "Info"
+                Write-Status "Recursos auditáveis: $($Script:TenantCaps.AuditableItems -join ', ')" "Detail"
+                return $true
+            }
+        }
+        catch {
+            Write-Status "Erro ao carregar módulo: $($_.Exception.Message)" "Warning"
+        }
+    }
+    else {
+        Write-Status "Módulo Get-TenantCapabilities.ps1 não encontrado" "Warning"
+        Write-Status "Executando auditoria completa (pode gerar erros de licença)" "Warning"
+    }
+    
+    return $false
+}
+
+function Test-CapabilityAvailable {
+    param([string]$Capability)
+    
+    if (-not $Script:TenantCaps) { return $true }  # Se não detectou, tenta tudo
+    
+    $Available = switch ($Capability) {
+        "DLP" { $Script:TenantCaps.Capabilities.DLP.Available }
+        "SensitivityLabels" { $Script:TenantCaps.Capabilities.SensitivityLabels.Available }
+        "Retention" { $Script:TenantCaps.Capabilities.Retention.Available }
+        "AlertPolicies" { $Script:TenantCaps.Capabilities.AlertPolicies.Available }
+        "AuditLog" { $Script:TenantCaps.Capabilities.AuditLog.Available }
+        "InsiderRisk" { $Script:TenantCaps.Capabilities.InsiderRisk.Available }
+        "eDiscovery" { $Script:TenantCaps.Capabilities.eDiscovery.Available }
+        "CommunicationCompliance" { $Script:TenantCaps.Capabilities.CommunicationCompliance.Available }
+        "ExternalSharing" { $Script:TenantCaps.Capabilities.ExternalSharing.Available }
+        default { $true }
+    }
+    
+    return $Available
 }
 
 # ============================================
@@ -184,7 +263,6 @@ function Connect-ToServices {
     # Security & Compliance
     Write-Status "Conectando ao Security & Compliance Center..." "Header"
     try {
-        # Verificar se já está conectado
         $null = Get-Label -ResultSize 1 -ErrorAction Stop 2>$null
         $Status.SecurityCompliance = $true
         Write-Status "Security & Compliance já conectado" "Success"
@@ -211,11 +289,23 @@ function Connect-ToServices {
 function Get-DLPAudit {
     Write-Section "AUDITORIA DE POLÍTICAS DLP"
     
+    # Verificar se disponível
+    if (-not (Test-CapabilityAvailable "DLP")) {
+        Write-Status "DLP não disponível neste tenant (licença não inclui)" "Skip"
+        $Script:SkippedCategories += "DLP"
+        return @{
+            Skipped = $true
+            Reason = "Licença não inclui DLP"
+            Score = 0
+        }
+    }
+    
     $Result = @{
         Policies = @()
         Rules = @()
         Recommendations = @()
         Score = 0
+        Skipped = $false
         Details = @{
             TotalPolicies = 0
             EnabledPolicies = 0
@@ -227,7 +317,6 @@ function Get-DLPAudit {
     }
     
     try {
-        # Políticas
         $Policies = Get-DlpCompliancePolicy -WarningAction SilentlyContinue -ErrorAction Stop
         
         if ($null -eq $Policies -or @($Policies).Count -eq 0) {
@@ -253,52 +342,24 @@ function Get-DLPAudit {
                 Mode = $Policy.Mode
                 Workload = ($Policy.Workload -join ", ")
                 Priority = $Policy.Priority
-                CreatedDate = $Policy.WhenCreatedUTC
-                ModifiedDate = $Policy.WhenChangedUTC
             }
             $Result.Policies += $PolicyInfo
             
-            # Contadores
-            if ($Policy.Enabled) { 
-                $Result.Details.EnabledPolicies++ 
-            }
-            if ($Policy.Mode -match "Test|Audit") { 
-                $Result.Details.TestModePolicies++ 
-            }
+            if ($Policy.Enabled) { $Result.Details.EnabledPolicies++ }
+            if ($Policy.Mode -match "Test|Audit") { $Result.Details.TestModePolicies++ }
             
-            # Cobertura de workloads
             foreach ($Wl in $Policy.Workload) {
                 if (-not $Workloads[$Wl]) { $Workloads[$Wl] = 0 }
                 $Workloads[$Wl]++
             }
             
-            # Exibir
             $Icon = if ($Policy.Enabled) { "✅" } else { "❌" }
             $ModeIcon = if ($Policy.Mode -eq "Enable") { "🟢" } elseif ($Policy.Mode -match "Test") { "🟡" } else { "⚪" }
             Write-Status "$Icon $ModeIcon $($Policy.Name)" "Detail"
-            
-            # Recomendações
-            if (-not $Policy.Enabled) {
-                $Result.Recommendations += @{
-                    Priority = "High"
-                    Category = "DLP"
-                    Message = "Política '$($Policy.Name)' está desabilitada."
-                    Remediation = "Habilite a política no Purview > DLP > Policies"
-                }
-            }
-            if ($Policy.Mode -match "Test") {
-                $Result.Recommendations += @{
-                    Priority = "Medium"
-                    Category = "DLP"
-                    Message = "Política '$($Policy.Name)' está em modo de teste."
-                    Remediation = "Após validação, altere para modo 'Enforce'"
-                }
-            }
         }
         
         $Result.Details.WorkloadCoverage = $Workloads.Keys | ForEach-Object { @{ Workload = $_; Policies = $Workloads[$_] } }
         
-        # Verificar cobertura mínima
         $RequiredWorkloads = @("Exchange", "SharePoint", "OneDriveForBusiness", "Teams")
         $MissingWorkloads = $RequiredWorkloads | Where-Object { -not $Workloads[$_] }
         
@@ -312,16 +373,13 @@ function Get-DLPAudit {
             }
         }
         
-        # Regras DLP
         $Rules = Get-DlpComplianceRule -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
         if ($Rules) {
             $Result.Details.TotalRules = @($Rules).Count
             $Result.Details.DisabledRules = @($Rules | Where-Object { $_.Disabled }).Count
-            $Result.Rules = @($Rules | Select-Object Name, Policy, Disabled, Priority, @{N='Actions';E={$_.BlockAccess}})
             Write-Status "Total de regras DLP: $($Result.Details.TotalRules) ($($Result.Details.DisabledRules) desabilitadas)" "Info"
         }
         
-        # Calcular score
         $ScoreFactors = @(
             @{ Weight = 30; Value = if ($Result.Details.TotalPolicies -ge $Script:Config.MinDLPPolicies) { 1 } else { $Result.Details.TotalPolicies / $Script:Config.MinDLPPolicies } },
             @{ Weight = 30; Value = if ($Result.Details.TotalPolicies -gt 0) { $Result.Details.EnabledPolicies / $Result.Details.TotalPolicies } else { 0 } },
@@ -332,20 +390,19 @@ function Get-DLPAudit {
         $Result.Score = [math]::Round(($ScoreFactors | ForEach-Object { $_.Weight * $_.Value } | Measure-Object -Sum).Sum)
     }
     catch {
-        Write-Status "Erro ao auditar DLP: $($_.Exception.Message)" "Error"
-        $Result.Recommendations += @{
-            Priority = "Critical"
-            Category = "DLP"
-            Message = "Erro ao auditar DLP: $($_.Exception.Message)"
-            Remediation = "Verifique permissões e conectividade"
+        if ($_.Exception.Message -match "license|not licensed") {
+            Write-Status "DLP não disponível (licença)" "Skip"
+            $Script:SkippedCategories += "DLP"
+            return @{ Skipped = $true; Reason = "Licença não inclui DLP"; Score = 0 }
         }
+        Write-Status "Erro ao auditar DLP: $($_.Exception.Message)" "Error"
     }
     
     return $Result
 }
 
 # ============================================
-# AUDITORIA: UNIFIED AUDIT LOG (MÉTODO ATUALIZADO)
+# AUDITORIA: UNIFIED AUDIT LOG
 # ============================================
 
 function Get-AuditLogAudit {
@@ -356,10 +413,9 @@ function Get-AuditLogAudit {
         MailboxAuditEnabled = $false
         AuditLogSearchable = $false
         RecentActivityFound = $false
-        AuditLogAgeLimit = $null
-        AdminAuditLogConfig = @{}
         Recommendations = @()
         Score = 0
+        Skipped = $false
         Details = @{
             TestSearchResults = 0
             LastActivityDate = $null
@@ -368,9 +424,6 @@ function Get-AuditLogAudit {
     }
     
     try {
-        # ============================================
-        # MÉTODO 1: Testar se conseguimos buscar logs (MAIS CONFIÁVEL)
-        # ============================================
         Write-Status "Testando Unified Audit Log com busca real..." "Header"
         
         $StartDate = (Get-Date).AddDays(-$Script:Config.AuditLogTestDays)
@@ -389,23 +442,15 @@ function Get-AuditLogAudit {
                 
                 Write-Status "Unified Audit Log: ATIVO E FUNCIONANDO" "Success"
                 Write-Status "Registros encontrados nos últimos $($Script:Config.AuditLogTestDays) dias: $($Result.Details.TestSearchResults)+" "Info"
-                Write-Status "Última atividade: $($Result.Details.LastActivityDate)" "Detail"
                 
                 $Result.Score += 60
             }
             else {
-                # Sem resultados mas sem erro = pode estar ativo mas sem atividade recente
                 $Result.AuditLogSearchable = $true
                 $Result.UnifiedAuditEnabled = $true
                 $Result.Details.MethodUsed = "Search-UnifiedAuditLog (empty)"
                 
                 Write-Status "Unified Audit Log: ATIVO (sem atividade recente)" "Warning"
-                $Result.Recommendations += @{
-                    Priority = "Low"
-                    Category = "AuditLog"
-                    Message = "Nenhuma atividade encontrada nos últimos $($Script:Config.AuditLogTestDays) dias"
-                    Remediation = "Verifique se há atividade normal no tenant"
-                }
                 $Result.Score += 40
             }
         }
@@ -415,57 +460,20 @@ function Get-AuditLogAudit {
             if ($ErrorMsg -match "UnifiedAuditLogIngestionEnabled.*False|not enabled|audit logging is not enabled") {
                 Write-Status "Unified Audit Log: DESABILITADO" "Error"
                 $Result.UnifiedAuditEnabled = $false
-                $Result.Details.MethodUsed = "Search-UnifiedAuditLog (error confirms disabled)"
                 
                 $Result.Recommendations += @{
                     Priority = "Critical"
                     Category = "AuditLog"
                     Message = "🚨 CRÍTICO: Unified Audit Log está DESABILITADO!"
-                    Remediation = @"
-Para ativar:
-1. Acesse: https://compliance.microsoft.com
-2. Vá em: Audit > (aguarde carregar)
-3. Se aparecer banner para ativar, clique nele
-4. OU execute: Set-AdminAuditLogConfig -UnifiedAuditLogIngestionEnabled `$true
-5. Aguarde até 24 horas para propagação
-"@
+                    Remediation = "Execute o script M365-Remediation.ps1 ou ative manualmente no Purview"
                 }
             }
             else {
-                # Outro tipo de erro
                 Write-Status "Erro ao testar Audit Log: $ErrorMsg" "Warning"
-                $Result.Details.MethodUsed = "Search-UnifiedAuditLog (error)"
             }
         }
         
-        # ============================================
-        # MÉTODO 2: Verificar configuração (para informação adicional)
-        # ============================================
-        Write-Status "Verificando configurações de auditoria..." "Header"
-        
-        try {
-            $AdminConfig = Get-AdminAuditLogConfig -ErrorAction Stop
-            
-            $Result.AdminAuditLogConfig = @{
-                UnifiedAuditLogIngestionEnabled = $AdminConfig.UnifiedAuditLogIngestionEnabled
-                AdminAuditLogEnabled = $AdminConfig.AdminAuditLogEnabled
-                AdminAuditLogCmdlets = $AdminConfig.AdminAuditLogCmdlets
-                AdminAuditLogParameters = $AdminConfig.AdminAuditLogParameters
-            }
-            
-            # NOTA: Este valor pode estar incorreto na nova arquitetura
-            if ($AdminConfig.UnifiedAuditLogIngestionEnabled -eq $false -and $Result.UnifiedAuditEnabled -eq $true) {
-                Write-Status "NOTA: Get-AdminAuditLogConfig retorna False, mas busca funciona" "Detail"
-                Write-Status "A Microsoft migrou o controle para o Purview Portal" "Detail"
-            }
-        }
-        catch {
-            Write-Status "Não foi possível obter AdminAuditLogConfig: $($_.Exception.Message)" "Detail"
-        }
-        
-        # ============================================
-        # MÉTODO 3: Verificar Mailbox Audit
-        # ============================================
+        # Mailbox Audit
         Write-Status "Verificando Mailbox Audit por padrão..." "Header"
         
         try {
@@ -487,44 +495,21 @@ Para ativar:
             }
         }
         catch {
-            Write-Status "Não foi possível verificar Mailbox Audit: $($_.Exception.Message)" "Warning"
+            Write-Status "Não foi possível verificar Mailbox Audit" "Warning"
         }
         
-        # ============================================
-        # MÉTODO 4: Verificar políticas de retenção de audit
-        # ============================================
-        Write-Status "Verificando políticas de retenção de audit..." "Header"
-        
+        # Retenção de audit
         try {
             $AuditRetention = Get-UnifiedAuditLogRetentionPolicy -ErrorAction SilentlyContinue
-            
             if ($AuditRetention) {
-                $Result.AuditLogAgeLimit = @($AuditRetention | Select-Object Name, Priority, RetentionDuration, @{N='RecordTypes';E={$_.RecordTypes -join ", "}})
-                Write-Status "Políticas de retenção de audit encontradas: $(@($AuditRetention).Count)" "Info"
-                
-                foreach ($Policy in $AuditRetention) {
-                    Write-Status "$($Policy.Name): $($Policy.RetentionDuration)" "Detail"
-                }
-                
+                Write-Status "Políticas de retenção de audit: $(@($AuditRetention).Count)" "Info"
                 $Result.Score += 20
             }
-            else {
-                Write-Status "Nenhuma política de retenção de audit customizada" "Info"
-                Write-Status "Usando retenção padrão (90 dias E5 / 180 dias E5+)" "Detail"
-            }
         }
-        catch {
-            Write-Status "Não foi possível verificar retenção de audit" "Detail"
-        }
+        catch { }
     }
     catch {
         Write-Status "Erro geral na auditoria de Audit Log: $($_.Exception.Message)" "Error"
-        $Result.Recommendations += @{
-            Priority = "Critical"
-            Category = "AuditLog"
-            Message = "Erro ao auditar Audit Log: $($_.Exception.Message)"
-            Remediation = "Verifique permissões de Compliance Administrator"
-        }
     }
     
     return $Result
@@ -537,22 +522,26 @@ Para ativar:
 function Get-RetentionAudit {
     Write-Section "AUDITORIA DE POLÍTICAS DE RETENÇÃO"
     
+    if (-not (Test-CapabilityAvailable "Retention")) {
+        Write-Status "Retention não disponível neste tenant" "Skip"
+        $Script:SkippedCategories += "Retention"
+        return @{ Skipped = $true; Reason = "Licença não inclui Retention"; Score = 0 }
+    }
+    
     $Result = @{
         Policies = @()
         Labels = @()
         Recommendations = @()
         Score = 0
+        Skipped = $false
         Details = @{
             TotalPolicies = 0
             EnabledPolicies = 0
             TotalLabels = 0
-            PublishedLabels = 0
-            WorkloadCoverage = @()
         }
     }
     
     try {
-        # Políticas de Retenção
         $Policies = Get-RetentionCompliancePolicy -WarningAction SilentlyContinue -ErrorAction Stop
         
         if ($null -eq $Policies -or @($Policies).Count -eq 0) {
@@ -561,53 +550,36 @@ function Get-RetentionAudit {
                 Priority = "High"
                 Category = "Retention"
                 Message = "Nenhuma política de retenção configurada"
-                Remediation = "Configure políticas de retenção para compliance regulatório e governança de dados"
+                Remediation = "Configure políticas de retenção para compliance"
             }
         }
         else {
             $Result.Details.TotalPolicies = @($Policies).Count
             Write-Status "Total de políticas de retenção: $($Result.Details.TotalPolicies)" "Info"
             
-            $Workloads = @{}
-            
             foreach ($Policy in $Policies) {
-                $PolicyInfo = @{
+                $Result.Policies += @{
                     Name = $Policy.Name
                     Enabled = $Policy.Enabled
                     Workload = ($Policy.Workload -join ", ")
-                    Mode = $Policy.Mode
-                    Comment = $Policy.Comment
                 }
-                $Result.Policies += $PolicyInfo
                 
                 if ($Policy.Enabled) { $Result.Details.EnabledPolicies++ }
-                
-                foreach ($Wl in $Policy.Workload) {
-                    if (-not $Workloads[$Wl]) { $Workloads[$Wl] = 0 }
-                    $Workloads[$Wl]++
-                }
                 
                 $Icon = if ($Policy.Enabled) { "✅" } else { "❌" }
                 Write-Status "$Icon $($Policy.Name)" "Detail"
             }
-            
-            $Result.Details.WorkloadCoverage = $Workloads.Keys | ForEach-Object { @{ Workload = $_; Policies = $Workloads[$_] } }
         }
         
-        # Labels de Retenção
         try {
             $Labels = Get-RetentionComplianceRule -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
             if ($Labels) {
                 $Result.Details.TotalLabels = @($Labels).Count
-                $Result.Labels = @($Labels | Select-Object Name, Policy, RetentionDuration, RetentionDurationDisplayHint)
                 Write-Status "Total de regras de retenção: $($Result.Details.TotalLabels)" "Info"
             }
         }
-        catch {
-            Write-Status "Não foi possível verificar regras de retenção" "Detail"
-        }
+        catch { }
         
-        # Calcular score
         $ScoreFactors = @(
             @{ Weight = 50; Value = if ($Result.Details.TotalPolicies -ge $Script:Config.MinRetentionPolicies) { 1 } else { $Result.Details.TotalPolicies / $Script:Config.MinRetentionPolicies } },
             @{ Weight = 30; Value = if ($Result.Details.TotalPolicies -gt 0) { $Result.Details.EnabledPolicies / $Result.Details.TotalPolicies } else { 0 } },
@@ -617,13 +589,12 @@ function Get-RetentionAudit {
         $Result.Score = [math]::Round(($ScoreFactors | ForEach-Object { $_.Weight * $_.Value } | Measure-Object -Sum).Sum)
     }
     catch {
-        Write-Status "Erro ao auditar Retenção: $($_.Exception.Message)" "Error"
-        $Result.Recommendations += @{
-            Priority = "High"
-            Category = "Retention"
-            Message = "Erro ao auditar retenção: $($_.Exception.Message)"
-            Remediation = "Verifique permissões"
+        if ($_.Exception.Message -match "license|not licensed") {
+            Write-Status "Retention não disponível (licença)" "Skip"
+            $Script:SkippedCategories += "Retention"
+            return @{ Skipped = $true; Reason = "Licença não inclui"; Score = 0 }
         }
+        Write-Status "Erro ao auditar Retenção: $($_.Exception.Message)" "Error"
     }
     
     return $Result
@@ -636,18 +607,22 @@ function Get-RetentionAudit {
 function Get-SensitivityLabelsAudit {
     Write-Section "AUDITORIA DE LABELS DE SENSIBILIDADE"
     
+    if (-not (Test-CapabilityAvailable "SensitivityLabels")) {
+        Write-Status "Sensitivity Labels não disponível neste tenant" "Skip"
+        $Script:SkippedCategories += "SensitivityLabels"
+        return @{ Skipped = $true; Reason = "Licença não inclui Labels"; Score = 0 }
+    }
+    
     $Result = @{
         Labels = @()
         Policies = @()
         Recommendations = @()
         Score = 0
+        Skipped = $false
         Details = @{
             TotalLabels = 0
             ParentLabels = 0
             ChildLabels = 0
-            EncryptionEnabled = 0
-            ContentMarkingEnabled = 0
-            AutoLabelingEnabled = 0
         }
     }
     
@@ -669,15 +644,12 @@ function Get-SensitivityLabelsAudit {
         Write-Status "Total de labels: $($Result.Details.TotalLabels)" "Info"
         
         foreach ($Label in $Labels) {
-            $LabelInfo = @{
+            $Result.Labels += @{
                 Name = $Label.Name
                 DisplayName = $Label.DisplayName
                 Priority = $Label.Priority
                 ParentId = $Label.ParentId
-                Tooltip = $Label.Tooltip
-                ContentType = $Label.ContentType -join ", "
             }
-            $Result.Labels += $LabelInfo
             
             if ([string]::IsNullOrEmpty($Label.ParentId)) {
                 $Result.Details.ParentLabels++
@@ -689,31 +661,15 @@ function Get-SensitivityLabelsAudit {
             }
         }
         
-        # Políticas de labels
         try {
             $LabelPolicies = Get-LabelPolicy -ErrorAction SilentlyContinue
             if ($LabelPolicies) {
-                $Result.Policies = @($LabelPolicies | Select-Object Name, Enabled, Mode, Priority, @{N='Labels';E={$_.Labels -join ", "}})
+                $Result.Policies = @($LabelPolicies | Select-Object Name, Enabled)
                 Write-Status "Políticas de publicação: $(@($LabelPolicies).Count)" "Info"
             }
         }
-        catch {
-            Write-Status "Não foi possível verificar políticas de labels" "Detail"
-        }
+        catch { }
         
-        # Auto-labeling policies
-        try {
-            $AutoLabelPolicies = Get-AutoSensitivityLabelPolicy -ErrorAction SilentlyContinue
-            if ($AutoLabelPolicies) {
-                $Result.Details.AutoLabelingEnabled = @($AutoLabelPolicies).Count
-                Write-Status "Políticas de auto-labeling: $($Result.Details.AutoLabelingEnabled)" "Info"
-            }
-        }
-        catch {
-            # Auto-labeling pode não estar disponível
-        }
-        
-        # Score
         $ScoreFactors = @(
             @{ Weight = 40; Value = if ($Result.Details.TotalLabels -ge $Script:Config.MinSensitivityLabels) { 1 } else { $Result.Details.TotalLabels / $Script:Config.MinSensitivityLabels } },
             @{ Weight = 30; Value = if ($Result.Details.ParentLabels -ge 3) { 1 } else { $Result.Details.ParentLabels / 3 } },
@@ -723,6 +679,11 @@ function Get-SensitivityLabelsAudit {
         $Result.Score = [math]::Round(($ScoreFactors | ForEach-Object { $_.Weight * $_.Value } | Measure-Object -Sum).Sum)
     }
     catch {
+        if ($_.Exception.Message -match "license|not licensed") {
+            Write-Status "Labels não disponível (licença)" "Skip"
+            $Script:SkippedCategories += "SensitivityLabels"
+            return @{ Skipped = $true; Reason = "Licença não inclui"; Score = 0 }
+        }
         Write-Status "Erro ao auditar Labels: $($_.Exception.Message)" "Error"
     }
     
@@ -740,12 +701,19 @@ function Get-AlertPoliciesAudit {
         Policies = @()
         Recommendations = @()
         Score = 0
+        Skipped = $false
         Details = @{
             TotalPolicies = 0
             EnabledPolicies = 0
             CustomPolicies = 0
             SystemPolicies = 0
+            AdvancedAlertsAvailable = $false
         }
+    }
+    
+    # Verificar se alertas avançados disponíveis
+    if ($Script:TenantCaps) {
+        $Result.Details.AdvancedAlertsAvailable = $Script:TenantCaps.Capabilities.AlertPolicies.AdvancedAlerts
     }
     
     try {
@@ -759,52 +727,27 @@ function Get-AlertPoliciesAudit {
         $Result.Details.TotalPolicies = @($Policies).Count
         Write-Status "Total de políticas de alerta: $($Result.Details.TotalPolicies)" "Info"
         
-        # Alertas importantes que devem estar ativos
-        $CriticalAlerts = @(
-            "Elevation of Exchange admin privilege",
-            "Suspicious email sending patterns detected",
-            "Malware campaign detected",
-            "Messages have been delayed",
-            "Unusual external user file activity",
-            "Unusual volume of file deletion"
-        )
-        
-        $MissingCritical = @()
-        
         foreach ($Policy in $Policies) {
-            $PolicyInfo = @{
+            $Result.Policies += @{
                 Name = $Policy.Name
                 Enabled = -not $Policy.Disabled
                 Severity = $Policy.Severity
-                Category = $Policy.Category
                 IsSystemRule = $Policy.IsSystemRule
             }
-            $Result.Policies += $PolicyInfo
             
             if (-not $Policy.Disabled) { $Result.Details.EnabledPolicies++ }
             if ($Policy.IsSystemRule) { $Result.Details.SystemPolicies++ }
             else { $Result.Details.CustomPolicies++ }
         }
         
-        # Verificar alertas críticos
-        $EnabledAlertNames = @($Policies | Where-Object { -not $_.Disabled }).Name
-        foreach ($Critical in $CriticalAlerts) {
-            if ($Critical -notin $EnabledAlertNames) {
-                $MissingCritical += $Critical
-            }
-        }
-        
-        if ($MissingCritical.Count -gt 0) {
-            Write-Status "Alertas críticos não encontrados/desabilitados: $($MissingCritical.Count)" "Warning"
-            $Result.Recommendations += @{
-                Priority = "Medium"
-                Category = "AlertPolicies"
-                Message = "Alertas críticos recomendados não estão ativos"
-                Remediation = "Verifique os alertas no Microsoft 365 Defender Portal"
-            }
-        }
-        
         Write-Status "Habilitadas: $($Result.Details.EnabledPolicies) | Sistema: $($Result.Details.SystemPolicies) | Custom: $($Result.Details.CustomPolicies)" "Info"
+        
+        if ($Result.Details.AdvancedAlertsAvailable) {
+            Write-Status "Alertas avançados: DISPONÍVEIS (E5)" "Success"
+        }
+        else {
+            Write-Status "Alertas avançados: Não disponíveis (apenas básicos)" "Info"
+        }
         
         $Result.Score = if ($Result.Details.TotalPolicies -gt 0) {
             [math]::Round(($Result.Details.EnabledPolicies / $Result.Details.TotalPolicies) * 100)
@@ -824,33 +767,31 @@ function Get-AlertPoliciesAudit {
 function Get-InsiderRiskAudit {
     Write-Section "AUDITORIA DE INSIDER RISK MANAGEMENT"
     
+    if (-not (Test-CapabilityAvailable "InsiderRisk")) {
+        Write-Status "Insider Risk não disponível neste tenant (requer E5 ou add-on)" "Skip"
+        $Script:SkippedCategories += "InsiderRisk"
+        return @{ Skipped = $true; Reason = "Requer E5 ou Insider Risk Add-on"; Score = 0 }
+    }
+    
     $Result = @{
         Policies = @()
         Recommendations = @()
         Score = 0
+        Skipped = $false
         Details = @{
             TotalPolicies = 0
             ActivePolicies = 0
-            Configured = $false
         }
     }
     
     try {
-        $Policies = Get-InsiderRiskPolicy -ErrorAction SilentlyContinue
+        $Policies = Get-InsiderRiskPolicy -WarningAction SilentlyContinue -ErrorAction Stop
         
         if ($null -eq $Policies -or @($Policies).Count -eq 0) {
             Write-Status "Nenhuma política de Insider Risk configurada" "Info"
-            Write-Status "Insider Risk Management requer licença E5 ou add-on" "Detail"
-            $Result.Recommendations += @{
-                Priority = "Medium"
-                Category = "InsiderRisk"
-                Message = "Considere implementar Insider Risk Management para detectar ameaças internas"
-                Remediation = "Acesse Purview > Insider Risk Management > Policies"
-            }
             return $Result
         }
         
-        $Result.Details.Configured = $true
         $Result.Details.TotalPolicies = @($Policies).Count
         Write-Status "Total de políticas: $($Result.Details.TotalPolicies)" "Info"
         
@@ -858,7 +799,6 @@ function Get-InsiderRiskAudit {
             $Result.Policies += @{
                 Name = $Policy.Name
                 Enabled = $Policy.Enabled
-                PolicyTemplate = $Policy.PolicyTemplate
             }
             
             $Icon = if ($Policy.Enabled) { "✅" } else { "❌" }
@@ -867,12 +807,15 @@ function Get-InsiderRiskAudit {
             if ($Policy.Enabled) { $Result.Details.ActivePolicies++ }
         }
         
-        $Result.Score = if ($Result.Details.Configured) { 
-            [math]::Round(($Result.Details.ActivePolicies / [math]::Max($Result.Details.TotalPolicies, 1)) * 100)
-        } else { 0 }
+        $Result.Score = [math]::Round(($Result.Details.ActivePolicies / [math]::Max($Result.Details.TotalPolicies, 1)) * 100)
     }
     catch {
-        Write-Status "Insider Risk não disponível (requer licença específica)" "Detail"
+        if ($_.Exception.Message -match "license|not licensed|not recognized") {
+            Write-Status "Insider Risk não disponível (licença)" "Skip"
+            $Script:SkippedCategories += "InsiderRisk"
+            return @{ Skipped = $true; Reason = "Requer E5"; Score = 0 }
+        }
+        Write-Status "Erro: $($_.Exception.Message)" "Warning"
     }
     
     return $Result
@@ -885,15 +828,27 @@ function Get-InsiderRiskAudit {
 function Get-eDiscoveryAudit {
     Write-Section "AUDITORIA DE EDISCOVERY"
     
+    if (-not (Test-CapabilityAvailable "eDiscovery")) {
+        Write-Status "eDiscovery não disponível neste tenant" "Skip"
+        $Script:SkippedCategories += "eDiscovery"
+        return @{ Skipped = $true; Reason = "Licença não inclui"; Score = 0 }
+    }
+    
     $Result = @{
         Cases = @()
         Recommendations = @()
         Score = 0
+        Skipped = $false
         Details = @{
             TotalCases = 0
             ActiveCases = 0
-            ClosedCases = 0
+            PremiumAvailable = $false
         }
+    }
+    
+    # Verificar se Premium disponível
+    if ($Script:TenantCaps) {
+        $Result.Details.PremiumAvailable = $Script:TenantCaps.Capabilities.eDiscovery.PremiumAvailable
     }
     
     try {
@@ -902,7 +857,7 @@ function Get-eDiscoveryAudit {
         if ($null -eq $Cases -or @($Cases).Count -eq 0) {
             Write-Status "Nenhum caso de eDiscovery encontrado" "Info"
             Write-Status "eDiscovery é usado sob demanda para investigações" "Detail"
-            $Result.Score = 100 # Não ter casos não é necessariamente ruim
+            $Result.Score = 100
             return $Result
         }
         
@@ -910,23 +865,19 @@ function Get-eDiscoveryAudit {
         Write-Status "Total de casos: $($Result.Details.TotalCases)" "Info"
         
         foreach ($Case in $Cases) {
-            $Result.Cases += @{
-                Name = $Case.Name
-                Status = $Case.Status
-                CreatedDateTime = $Case.CreatedDateTime
-                CaseType = $Case.CaseType
-            }
-            
             if ($Case.Status -eq "Active") { $Result.Details.ActiveCases++ }
-            else { $Result.Details.ClosedCases++ }
         }
         
-        Write-Status "Ativos: $($Result.Details.ActiveCases) | Fechados: $($Result.Details.ClosedCases)" "Info"
+        Write-Status "Ativos: $($Result.Details.ActiveCases)" "Info"
         
-        $Result.Score = 100 # eDiscovery configurado
+        if ($Result.Details.PremiumAvailable) {
+            Write-Status "eDiscovery Premium: DISPONÍVEL" "Success"
+        }
+        
+        $Result.Score = 100
     }
     catch {
-        Write-Status "Erro ao verificar eDiscovery: $($_.Exception.Message)" "Warning"
+        Write-Status "Erro: $($_.Exception.Message)" "Warning"
     }
     
     return $Result
@@ -941,25 +892,21 @@ function Get-ExternalSharingAudit {
     
     $Result = @{
         OWAPolicies = @()
-        SharingPolicies = @()
         Recommendations = @()
         Score = 0
+        Skipped = $false
         Details = @{
-            ExternalAccessRestricted = $false
             WacExternalDisabled = 0
         }
     }
     
     try {
-        # OWA Policies
         $OWAPolicies = Get-OwaMailboxPolicy -ErrorAction Stop
         
         foreach ($Policy in $OWAPolicies) {
             $Result.OWAPolicies += @{
                 Name = $Policy.Name
-                ExternalSPMySiteHostURL = $Policy.ExternalSPMySiteHostURL
                 WacExternalServicesEnabled = $Policy.WacExternalServicesEnabled
-                ExternalImageProxyEnabled = $Policy.ExternalImageProxyEnabled
             }
             
             if (-not $Policy.WacExternalServicesEnabled) {
@@ -969,7 +916,6 @@ function Get-ExternalSharingAudit {
             Write-Status "$($Policy.Name): External WAC = $($Policy.WacExternalServicesEnabled)" "Detail"
         }
         
-        # Calcular score
         if (@($OWAPolicies).Count -gt 0) {
             $Result.Score = [math]::Round(($Result.Details.WacExternalDisabled / @($OWAPolicies).Count) * 100)
         }
@@ -984,7 +930,7 @@ function Get-ExternalSharingAudit {
         }
     }
     catch {
-        Write-Status "Erro ao verificar compartilhamento externo: $($_.Exception.Message)" "Warning"
+        Write-Status "Erro: $($_.Exception.Message)" "Warning"
     }
     
     return $Result
@@ -997,43 +943,47 @@ function Get-ExternalSharingAudit {
 function Get-CommunicationComplianceAudit {
     Write-Section "AUDITORIA DE COMMUNICATION COMPLIANCE"
     
+    if (-not (Test-CapabilityAvailable "CommunicationCompliance")) {
+        Write-Status "Communication Compliance não disponível (requer E5 ou add-on)" "Skip"
+        $Script:SkippedCategories += "CommunicationCompliance"
+        return @{ Skipped = $true; Reason = "Requer E5 ou add-on"; Score = 0 }
+    }
+    
     $Result = @{
         Policies = @()
         Recommendations = @()
         Score = 0
+        Skipped = $false
         Details = @{
             TotalPolicies = 0
             ActivePolicies = 0
-            Configured = $false
         }
     }
     
     try {
-        $Policies = Get-SupervisoryReviewPolicyV2 -ErrorAction SilentlyContinue
+        $Policies = Get-SupervisoryReviewPolicyV2 -WarningAction SilentlyContinue -ErrorAction Stop
         
         if ($null -eq $Policies -or @($Policies).Count -eq 0) {
             Write-Status "Nenhuma política de Communication Compliance configurada" "Info"
-            Write-Status "Communication Compliance requer licença específica" "Detail"
             return $Result
         }
         
-        $Result.Details.Configured = $true
         $Result.Details.TotalPolicies = @($Policies).Count
         Write-Status "Total de políticas: $($Result.Details.TotalPolicies)" "Info"
         
         foreach ($Policy in $Policies) {
-            $Result.Policies += @{
-                Name = $Policy.Name
-                Enabled = $Policy.Enabled
-            }
-            
             if ($Policy.Enabled) { $Result.Details.ActivePolicies++ }
         }
         
         $Result.Score = [math]::Round(($Result.Details.ActivePolicies / [math]::Max($Result.Details.TotalPolicies, 1)) * 100)
     }
     catch {
-        Write-Status "Communication Compliance não disponível" "Detail"
+        if ($_.Exception.Message -match "license|not licensed|not recognized") {
+            Write-Status "Communication Compliance não disponível (licença)" "Skip"
+            $Script:SkippedCategories += "CommunicationCompliance"
+            return @{ Skipped = $true; Reason = "Requer E5"; Score = 0 }
+        }
+        Write-Status "Erro: $($_.Exception.Message)" "Warning"
     }
     
     return $Result
@@ -1049,6 +999,13 @@ function Export-Results {
     Write-Section "EXPORTANDO RESULTADOS"
     
     Initialize-OutputFolder
+    
+    # Adicionar info do tenant ao resultado
+    if ($Script:TenantCaps) {
+        $Results.TenantInfo = $Script:TenantCaps.TenantInfo
+        $Results.DetectedLicense = $Script:TenantCaps.License
+        $Results.SkippedCategories = $Script:SkippedCategories
+    }
     
     # JSON Detalhado
     $JsonPath = Join-Path $OutputFolder "audit-results.json"
@@ -1068,34 +1025,27 @@ function Export-Results {
                         Remediacao = $Rec.Remediation
                     }
                 }
-                else {
-                    $Priority = if ($Rec -match "CRÍTICO|🚨") { "Critical" } elseif ($Rec -match "⚠️") { "High" } else { "Medium" }
-                    $AllRecs += [PSCustomObject]@{
-                        Categoria = $Key
-                        Prioridade = $Priority
-                        Mensagem = $Rec
-                        Remediacao = ""
-                    }
-                }
             }
         }
     }
     
     if ($AllRecs.Count -gt 0) {
         $CsvPath = Join-Path $OutputFolder "recommendations.csv"
-        $AllRecs | Sort-Object @{E={
-            switch ($_.Prioridade) { "Critical" { 0 } "High" { 1 } "Medium" { 2 } "Low" { 3 } default { 4 } }
-        }} | Export-Csv $CsvPath -NoTypeInformation -Encoding UTF8
+        $AllRecs | Export-Csv $CsvPath -NoTypeInformation -Encoding UTF8
         Write-Status "CSV Recomendações: $CsvPath" "Success"
     }
     
-    # Sumário em Markdown
+    # Markdown
     $MdPath = Join-Path $OutputFolder "SUMMARY.md"
+    $TenantName = if ($Script:TenantCaps) { $Script:TenantCaps.TenantInfo.DisplayName } else { "Desconhecido" }
+    $LicenseInfo = if ($Script:TenantCaps) { $Script:TenantCaps.License.Probable } else { "Não detectada" }
+    
     $Md = @"
 # 🛡️ Relatório de Auditoria Purview
 
 **Data:** $(Get-Date -Format "dd/MM/yyyy HH:mm")
-**Tenant:** $((Get-OrganizationConfig -ErrorAction SilentlyContinue).Name)
+**Tenant:** $TenantName
+**Licença Detectada:** $LicenseInfo
 
 ## 📊 Scores por Categoria
 
@@ -1106,33 +1056,21 @@ function Export-Results {
     $Categories = @("DLP", "AuditLog", "Retention", "SensitivityLabels", "AlertPolicies", "InsiderRisk", "eDiscovery", "ExternalSharing", "CommunicationCompliance")
     foreach ($Cat in $Categories) {
         if ($Results[$Cat]) {
-            $Score = $Results[$Cat].Score
-            $Status = if ($Score -ge 80) { "✅ Bom" } elseif ($Score -ge 50) { "⚠️ Atenção" } else { "❌ Crítico" }
-            $Md += "`n| $Cat | $Score% | $Status |"
+            if ($Results[$Cat].Skipped) {
+                $Md += "`n| $Cat | N/A | ⏭️ Não licenciado |"
+            }
+            else {
+                $Score = $Results[$Cat].Score
+                $Status = if ($Score -ge 80) { "✅ Bom" } elseif ($Score -ge 50) { "⚠️ Atenção" } else { "❌ Crítico" }
+                $Md += "`n| $Cat | $Score% | $Status |"
+            }
         }
     }
     
-    $Md += @"
-
-
-## 📋 Recomendações
-
-"@
-    
-    $CriticalRecs = @($AllRecs | Where-Object { $_.Prioridade -eq "Critical" })
-    $HighRecs = @($AllRecs | Where-Object { $_.Prioridade -eq "High" })
-    
-    if ($CriticalRecs.Count -gt 0) {
-        $Md += "`n### 🚨 Críticas`n"
-        foreach ($Rec in $CriticalRecs) {
-            $Md += "`n- **[$($Rec.Categoria)]** $($Rec.Mensagem)"
-        }
-    }
-    
-    if ($HighRecs.Count -gt 0) {
-        $Md += "`n`n### ⚠️ Alta Prioridade`n"
-        foreach ($Rec in $HighRecs) {
-            $Md += "`n- **[$($Rec.Categoria)]** $($Rec.Mensagem)"
+    if ($Script:SkippedCategories.Count -gt 0) {
+        $Md += "`n`n## ⏭️ Categorias Puladas (não licenciadas)`n"
+        foreach ($Skip in $Script:SkippedCategories) {
+            $Md += "`n- $Skip"
         }
     }
     
@@ -1151,7 +1089,14 @@ function Show-Summary {
     
     Write-Section "SUMÁRIO DA AUDITORIA"
     
-    Write-Host ""
+    # Info do tenant
+    if ($Script:TenantCaps) {
+        Write-Host ""
+        Write-Host "  📋 TENANT: $($Script:TenantCaps.TenantInfo.DisplayName)" -ForegroundColor Cyan
+        Write-Host "  📋 LICENÇA: $($Script:TenantCaps.License.Probable)" -ForegroundColor Cyan
+        Write-Host ""
+    }
+    
     Write-Host "  📊 SCORES POR CATEGORIA" -ForegroundColor Cyan
     Write-Host "  ─────────────────────────────────────────────" -ForegroundColor Gray
     
@@ -1172,18 +1117,30 @@ function Show-Summary {
     
     foreach ($Cat in $Categories) {
         if ($Results[$Cat.Key]) {
+            $Skipped = $Results[$Cat.Key].Skipped -eq $true
             $Score = $Results[$Cat.Key].Score
-            Write-Score -Category $Cat.Name.PadRight(28) -Score $Score
-            $TotalScore += $Score
-            $ValidCategories++
+            
+            Write-Score -Category $Cat.Name.PadRight(28) -Score $Score -Skipped $Skipped
+            
+            if (-not $Skipped) {
+                $TotalScore += $Score
+                $ValidCategories++
+            }
         }
     }
     
     $OverallScore = if ($ValidCategories -gt 0) { [math]::Round($TotalScore / $ValidCategories) } else { 0 }
     
     Write-Host "  ─────────────────────────────────────────────" -ForegroundColor Gray
-    Write-Score -Category "SCORE GERAL".PadRight(28) -Score $OverallScore
+    Write-Score -Category "SCORE GERAL (licenciados)".PadRight(28) -Score $OverallScore
     Write-Host ""
+    
+    # Info sobre categorias puladas
+    if ($Script:SkippedCategories.Count -gt 0) {
+        Write-Host "  ⏭️  CATEGORIAS PULADAS (não licenciadas):" -ForegroundColor DarkGray
+        Write-Host "     $($Script:SkippedCategories -join ', ')" -ForegroundColor DarkGray
+        Write-Host ""
+    }
     
     # Contar recomendações
     $CriticalCount = 0
@@ -1200,9 +1157,6 @@ function Show-Summary {
                         default { $MediumCount++ }
                     }
                 }
-                elseif ($Rec -match "CRÍTICO|🚨") { $CriticalCount++ }
-                elseif ($Rec -match "⚠️") { $HighCount++ }
-                else { $MediumCount++ }
             }
         }
     }
@@ -1249,6 +1203,17 @@ function Start-PurviewAudit {
         Write-Status "Pulando conexão (usando sessão existente)" "Info"
     }
     
+    # Detectar capacidades do tenant
+    if (-not $SkipCapabilityCheck) {
+        $CapabilitiesLoaded = Initialize-TenantCapabilities
+        if (-not $CapabilitiesLoaded) {
+            Write-Status "Executando auditoria sem detecção de capacidades" "Warning"
+        }
+    }
+    else {
+        Write-Status "Detecção de capacidades pulada (-SkipCapabilityCheck)" "Info"
+    }
+    
     # Executar auditorias
     $Results = @{}
     
@@ -1274,9 +1239,6 @@ function Start-PurviewAudit {
     Write-Host "     $ReportFolder" -ForegroundColor Green
     Write-Host ""
     Write-Host "  ✅ Auditoria concluída!" -ForegroundColor Green
-    Write-Host ""
-    Write-Host "  💡 Dica: Para desconectar:" -ForegroundColor Gray
-    Write-Host '     Disconnect-ExchangeOnline -Confirm:$false' -ForegroundColor Gray
     Write-Host ""
     
     return $Results
