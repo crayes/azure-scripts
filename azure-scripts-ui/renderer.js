@@ -1,278 +1,329 @@
 /**
- * Renderer Script - Interface do usuário
+ * Renderer Script - Interface do Usuário
  * 
- * Este script roda no processo renderer e usa a API segura
- * exposta pelo preload.js (window.electronAPI)
+ * Usa window.electronAPI exposta pelo preload.js
+ * NÃO tem acesso direto ao Node.js (segurança)
  */
 
-// Estado da aplicação
+// ==================== Estado da Aplicação ====================
+
 const state = {
   scripts: [],
   selectedScript: null,
   isRunning: false,
+  systemInfo: null,
+  psInfo: null,
   outputCleanup: null,
-  powerShellInfo: null
 };
 
 // ==================== Inicialização ====================
 
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log('Azure Scripts UI initialized');
+  console.log('🚀 Azure Scripts UI inicializando...');
   
-  // Exibir versões
+  // Configurar versões
   displayVersions();
   
-  // Verificar PowerShell
-  await checkPowerShellStatus();
+  // Carregar informações do sistema
+  await loadSystemInfo();
   
-  // Carregar lista de scripts
+  // Verificar PowerShell
+  await checkPowerShell();
+  
+  // Carregar scripts
   await loadScripts();
   
-  // Configurar event listeners
+  // Configurar listeners
   setupEventListeners();
   
-  // Registrar listener de output em tempo real
+  // Registrar listener de output
   state.outputCleanup = window.electronAPI.onScriptOutput(handleScriptOutput);
+  
+  console.log('✅ Inicialização completa');
 });
 
-// Cleanup ao fechar
+// Cleanup
 window.addEventListener('beforeunload', () => {
-  if (state.outputCleanup) {
-    state.outputCleanup();
-  }
+  if (state.outputCleanup) state.outputCleanup();
 });
 
-// ==================== Funções de UI ====================
+// ==================== Funções de Carregamento ====================
 
 function displayVersions() {
-  const versions = window.electronAPI.versions;
-  document.getElementById('electron-version').textContent = versions.electron;
-  document.getElementById('node-version').textContent = versions.node;
+  const v = window.electronAPI.versions;
+  document.getElementById('electron-version').textContent = v.electron;
+  document.getElementById('node-version').textContent = v.node;
 }
 
-async function checkPowerShellStatus() {
-  const statusEl = document.getElementById('powershell-status');
+async function loadSystemInfo() {
+  try {
+    state.systemInfo = await window.electronAPI.getSystemInfo();
+    console.log('Sistema:', state.systemInfo);
+  } catch (error) {
+    console.error('Erro ao carregar info do sistema:', error);
+  }
+}
+
+async function checkPowerShell() {
+  const statusEl = document.getElementById('ps-status');
   
   try {
-    state.powerShellInfo = await window.electronAPI.checkPowerShell();
+    state.psInfo = await window.electronAPI.checkPowerShell();
     
-    if (state.powerShellInfo.available) {
-      statusEl.innerHTML = `
-        <span class="status-ok">✅ PowerShell ${state.powerShellInfo.version}</span>
-        <small>(${state.powerShellInfo.executable})</small>
-      `;
-      statusEl.className = 'status-badge status-ok';
+    if (state.psInfo.available) {
+      statusEl.innerHTML = `<span class="status-ok">✅ ${state.psInfo.executable}</span>`;
+      statusEl.title = state.psInfo.version;
     } else {
-      statusEl.innerHTML = `
-        <span class="status-error">❌ PowerShell não encontrado</span>
-        <small>Instale o <a href="https://github.com/PowerShell/PowerShell" target="_blank">PowerShell Core</a></small>
-      `;
-      statusEl.className = 'status-badge status-error';
+      statusEl.innerHTML = `<span class="status-error">❌ PowerShell não encontrado</span>`;
+      showNotification('PowerShell não encontrado. Instale o PowerShell Core.', 'error');
     }
   } catch (error) {
-    statusEl.innerHTML = `<span class="status-error">❌ Erro ao verificar PowerShell</span>`;
-    statusEl.className = 'status-badge status-error';
+    statusEl.innerHTML = `<span class="status-error">❌ Erro</span>`;
     console.error('Erro ao verificar PowerShell:', error);
   }
 }
 
 async function loadScripts() {
-  const scriptsContainer = document.getElementById('scripts-list');
+  const container = document.getElementById('scripts-list');
   
   try {
-    state.scripts = await window.electronAPI.listScripts();
+    state.scripts = await window.electronAPI.getScripts();
     
     if (state.scripts.length === 0) {
-      scriptsContainer.innerHTML = '<p class="no-scripts">Nenhum script encontrado</p>';
+      container.innerHTML = '<p class="empty-state">Nenhum script encontrado</p>';
       return;
     }
-
+    
     // Agrupar por categoria
     const grouped = state.scripts.reduce((acc, script) => {
       if (!acc[script.category]) acc[script.category] = [];
       acc[script.category].push(script);
       return acc;
     }, {});
-
+    
     // Renderizar
-    scriptsContainer.innerHTML = Object.entries(grouped)
+    container.innerHTML = Object.entries(grouped)
+      .sort(([a], [b]) => a.localeCompare(b))
       .map(([category, scripts]) => `
         <div class="script-category">
-          <h4 class="category-title">${getCategoryIcon(category)} ${category}</h4>
-          <div class="scripts-in-category">
-            ${scripts.map(script => `
-              <div class="script-item" data-path="${script.path}" title="${script.path}">
-                <span class="script-icon">📜</span>
-                <span class="script-name">${script.name}</span>
-              </div>
+          <h4 class="category-header">${getCategoryIcon(category)} ${category}</h4>
+          <ul class="script-list">
+            ${scripts.map(s => `
+              <li class="script-item" data-path="${escapeHtml(s.path)}" title="${escapeHtml(s.relativePath)}">
+                <span class="script-icon">📄</span>
+                <span class="script-name">${escapeHtml(s.name)}</span>
+              </li>
             `).join('')}
-          </div>
+          </ul>
         </div>
       `).join('');
-
-    // Adicionar event listeners aos scripts
-    document.querySelectorAll('.script-item').forEach(item => {
+    
+    // Event listeners
+    container.querySelectorAll('.script-item').forEach(item => {
       item.addEventListener('click', () => selectScript(item.dataset.path));
     });
-
+    
+    console.log(`📜 ${state.scripts.length} scripts carregados`);
+    
   } catch (error) {
-    scriptsContainer.innerHTML = `<p class="error">Erro ao carregar scripts: ${error.message}</p>`;
+    container.innerHTML = `<p class="error-state">Erro ao carregar scripts: ${error.message}</p>`;
     console.error('Erro ao carregar scripts:', error);
   }
+}
+
+// ==================== Seleção e Execução ====================
+
+function selectScript(scriptPath) {
+  // Limpar seleção anterior
+  document.querySelectorAll('.script-item.selected').forEach(el => {
+    el.classList.remove('selected');
+  });
+  
+  // Selecionar novo
+  const item = document.querySelector(`.script-item[data-path="${CSS.escape(scriptPath)}"]`);
+  if (item) item.classList.add('selected');
+  
+  state.selectedScript = state.scripts.find(s => s.path === scriptPath);
+  
+  // Atualizar UI
+  const nameEl = document.getElementById('selected-script');
+  const runBtn = document.getElementById('run-btn');
+  const viewBtn = document.getElementById('view-btn');
+  
+  if (state.selectedScript) {
+    nameEl.textContent = state.selectedScript.name;
+    runBtn.disabled = !state.psInfo?.available;
+    viewBtn.disabled = false;
+  } else {
+    nameEl.textContent = 'Nenhum script selecionado';
+    runBtn.disabled = true;
+    viewBtn.disabled = true;
+  }
+}
+
+async function runSelectedScript() {
+  if (!state.selectedScript || state.isRunning) return;
+  
+  state.isRunning = true;
+  updateRunButton(true);
+  clearOutput();
+  
+  try {
+    const result = await window.electronAPI.runScript(state.selectedScript.path);
+    
+    if (result.success) {
+      showNotification('Script executado com sucesso!', 'success');
+    } else {
+      showNotification(`Script finalizado com código ${result.exitCode}`, 'warning');
+    }
+  } catch (error) {
+    appendOutput(`\n❌ ERRO: ${error.message}\n`, 'error');
+    showNotification(`Erro: ${error.message}`, 'error');
+  } finally {
+    state.isRunning = false;
+    updateRunButton(false);
+  }
+}
+
+async function viewSelectedScript() {
+  if (!state.selectedScript) return;
+  
+  try {
+    const content = await window.electronAPI.readScript(state.selectedScript.path);
+    showScriptModal(state.selectedScript.name, content);
+  } catch (error) {
+    showNotification(`Erro ao ler script: ${error.message}`, 'error');
+  }
+}
+
+// ==================== Output ====================
+
+function handleScriptOutput(data) {
+  const typeMap = {
+    'stdout': 'output',
+    'stderr': 'error',
+    'info': 'info',
+    'complete': data.exitCode === 0 ? 'success' : 'warning',
+    'error': 'error',
+  };
+  appendOutput(data.data, typeMap[data.type] || 'output');
+}
+
+function appendOutput(text, type = 'output') {
+  const outputEl = document.getElementById('output');
+  const span = document.createElement('span');
+  span.className = `output-${type}`;
+  span.textContent = text;
+  outputEl.appendChild(span);
+  outputEl.scrollTop = outputEl.scrollHeight;
+}
+
+function clearOutput() {
+  document.getElementById('output').innerHTML = '';
+}
+
+// ==================== UI Helpers ====================
+
+function updateRunButton(running) {
+  const btn = document.getElementById('run-btn');
+  if (running) {
+    btn.innerHTML = '<span class="spinner"></span> Executando...';
+    btn.disabled = true;
+  } else {
+    btn.innerHTML = '▶️ Executar';
+    btn.disabled = !state.selectedScript || !state.psInfo?.available;
+  }
+}
+
+function setupEventListeners() {
+  document.getElementById('run-btn').addEventListener('click', runSelectedScript);
+  document.getElementById('view-btn').addEventListener('click', viewSelectedScript);
+  document.getElementById('clear-btn').addEventListener('click', clearOutput);
+  
+  // Feature cards
+  document.querySelectorAll('.feature-card').forEach(card => {
+    card.addEventListener('click', () => {
+      const feature = card.querySelector('h4')?.textContent;
+      showNotification(`"${feature}" - Em desenvolvimento`, 'info');
+    });
+  });
 }
 
 function getCategoryIcon(category) {
   const icons = {
     'Exchange': '📧',
     'EntraID': '🔐',
+    'Entra': '🔐',
     'OneDrive': '☁️',
     'SharePoint': '📁',
     'Purview': '🛡️',
     'DNS': '🌐',
     'HybridIdentity': '🔄',
     'Remediation': '🔧',
-    'Root': '📂'
+    'Root': '📂',
   };
   return icons[category] || '📁';
 }
 
-function selectScript(scriptPath) {
-  // Remover seleção anterior
-  document.querySelectorAll('.script-item').forEach(item => {
-    item.classList.remove('selected');
-  });
-
-  // Selecionar novo
-  const item = document.querySelector(`.script-item[data-path="${scriptPath}"]`);
-  if (item) {
-    item.classList.add('selected');
-  }
-
-  state.selectedScript = state.scripts.find(s => s.path === scriptPath);
-  
-  // Atualizar UI
-  document.getElementById('selected-script-name').textContent = state.selectedScript?.name || 'Nenhum';
-  document.getElementById('run-script-btn').disabled = !state.selectedScript || !state.powerShellInfo?.available;
-  
-  // Limpar output anterior
-  clearOutput();
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
 }
 
-function setupEventListeners() {
-  // Botão executar
-  document.getElementById('run-script-btn').addEventListener('click', executeSelectedScript);
-  
-  // Botão limpar output
-  document.getElementById('clear-output-btn').addEventListener('click', clearOutput);
-  
-  // Botão selecionar pasta
-  document.getElementById('select-folder-btn')?.addEventListener('click', selectOutputFolder);
-  
-  // Feature cards (placeholder para futuras implementações)
-  document.querySelectorAll('.feature-card').forEach(card => {
-    card.addEventListener('click', () => {
-      const feature = card.querySelector('h4').textContent;
-      showNotification(`Recurso "${feature}" será implementado em breve!`, 'info');
-    });
-  });
-}
-
-// ==================== Execução de Scripts ====================
-
-async function executeSelectedScript() {
-  if (!state.selectedScript || state.isRunning) return;
-
-  const outputEl = document.getElementById('script-output');
-  const runBtn = document.getElementById('run-script-btn');
-  
-  state.isRunning = true;
-  runBtn.disabled = true;
-  runBtn.innerHTML = '<span class="spinner"></span> Executando...';
-  
-  // Limpar e preparar output
-  outputEl.innerHTML = '';
-  appendOutput(`[${new Date().toLocaleTimeString()}] Iniciando: ${state.selectedScript.name}\n`, 'info');
-  appendOutput(`Caminho: ${state.selectedScript.path}\n`, 'info');
-  appendOutput('─'.repeat(60) + '\n', 'separator');
-
-  try {
-    const result = await window.electronAPI.executeScript(state.selectedScript.path);
-    
-    appendOutput('\n' + '─'.repeat(60) + '\n', 'separator');
-    
-    if (result.success) {
-      appendOutput(`[${new Date().toLocaleTimeString()}] ✅ Script finalizado com sucesso (código: ${result.code})\n`, 'success');
-    } else {
-      appendOutput(`[${new Date().toLocaleTimeString()}] ⚠️ Script finalizado com código: ${result.code}\n`, 'warning');
-    }
-    
-  } catch (error) {
-    appendOutput(`\n❌ ERRO: ${error.message}\n`, 'error');
-    showNotification(`Erro ao executar script: ${error.message}`, 'error');
-  } finally {
-    state.isRunning = false;
-    runBtn.disabled = !state.selectedScript;
-    runBtn.innerHTML = '▶️ Executar Script';
-  }
-}
-
-function handleScriptOutput(data) {
-  const type = data.type === 'stderr' ? 'error' : 'stdout';
-  appendOutput(data.data, type);
-}
-
-function appendOutput(text, type = 'stdout') {
-  const outputEl = document.getElementById('script-output');
-  const span = document.createElement('span');
-  span.className = `output-${type}`;
-  span.textContent = text;
-  outputEl.appendChild(span);
-  
-  // Auto-scroll
-  outputEl.scrollTop = outputEl.scrollHeight;
-}
-
-function clearOutput() {
-  const outputEl = document.getElementById('script-output');
-  outputEl.innerHTML = '<span class="output-info">Output do script aparecerá aqui...</span>';
-}
-
-// ==================== Outras Funções ====================
-
-async function selectOutputFolder() {
-  try {
-    const folder = await window.electronAPI.selectOutputFolder();
-    if (folder) {
-      document.getElementById('output-folder-path').textContent = folder;
-      showNotification(`Pasta selecionada: ${folder}`, 'success');
-    }
-  } catch (error) {
-    showNotification(`Erro ao selecionar pasta: ${error.message}`, 'error');
-  }
-}
+// ==================== Notificações ====================
 
 function showNotification(message, type = 'info') {
-  const container = document.getElementById('notifications') || createNotificationContainer();
+  const container = document.getElementById('notifications') || createNotificationsContainer();
   
   const notification = document.createElement('div');
   notification.className = `notification notification-${type}`;
+  
+  const icons = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' };
   notification.innerHTML = `
-    <span class="notification-icon">${type === 'error' ? '❌' : type === 'success' ? '✅' : 'ℹ️'}</span>
-    <span class="notification-message">${message}</span>
+    <span class="notif-icon">${icons[type] || icons.info}</span>
+    <span class="notif-message">${escapeHtml(message)}</span>
+    <button class="notif-close" onclick="this.parentElement.remove()">×</button>
   `;
   
   container.appendChild(notification);
   
-  // Auto-remove após 5 segundos
+  // Auto-remover após 5s
   setTimeout(() => {
     notification.classList.add('fade-out');
     setTimeout(() => notification.remove(), 300);
   }, 5000);
 }
 
-function createNotificationContainer() {
+function createNotificationsContainer() {
   const container = document.createElement('div');
   container.id = 'notifications';
   document.body.appendChild(container);
   return container;
+}
+
+// ==================== Modal de Visualização ====================
+
+function showScriptModal(title, content) {
+  // Remover modal existente
+  document.getElementById('script-modal')?.remove();
+  
+  const modal = document.createElement('div');
+  modal.id = 'script-modal';
+  modal.className = 'modal-overlay';
+  modal.innerHTML = `
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>📄 ${escapeHtml(title)}</h3>
+        <button class="modal-close" onclick="document.getElementById('script-modal').remove()">×</button>
+      </div>
+      <pre class="modal-body"><code>${escapeHtml(content)}</code></pre>
+    </div>
+  `;
+  
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) modal.remove();
+  });
+  
+  document.body.appendChild(modal);
 }
