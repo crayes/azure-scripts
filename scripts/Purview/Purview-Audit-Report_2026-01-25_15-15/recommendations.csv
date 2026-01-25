@@ -1,6 +1,0 @@
-"Categoria","Prioridade","Mensagem","Remediacao"
-"DLP","High","Workloads sem proteção DLP: Exchange, SharePoint, OneDriveForBusiness, Teams","Crie políticas DLP que incluam esses workloads"
-"AlertPolicies","Medium","Alertas críticos recomendados não estão ativos","Verifique os alertas no Microsoft 365 Defender Portal"
-"DLP","Medium","Política 'DLP - Protecao CPF Brasileiro' está em modo de teste.","Após validação, altere para modo 'Enforce'"
-"DLP","Medium","Política 'DLP - Protecao CNPJ' está em modo de teste.","Após validação, altere para modo 'Enforce'"
-"DLP","Medium","Política 'DLP - Protecao Cartao de Credito' está em modo de teste.","Após validação, altere para modo 'Enforce'"
