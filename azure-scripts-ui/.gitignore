@@ -8,7 +8,6 @@ build/
 
 # Electron
 *.log
-*.lock
 
 # OS specific
 .DS_Store
