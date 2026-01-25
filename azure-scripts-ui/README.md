@@ -1,229 +1,164 @@
 # Azure Scripts UI
 
-Interface desktop multiplataforma (Windows, macOS, Linux) para gerenciamento e execução de scripts de administração Microsoft 365 e Azure.
+Interface desktop multiplataforma para gerenciamento e execução de scripts de administração Microsoft 365 e Azure.
 
-## 📋 Visão Geral
+![Azure Scripts UI](https://img.shields.io/badge/Electron-33.x-47848F?logo=electron) ![PowerShell](https://img.shields.io/badge/PowerShell-Core-5391FE?logo=powershell) ![Platform](https://img.shields.io/badge/Platform-Windows%20|%20macOS%20|%20Linux-lightgrey)
 
-Esta aplicação Electron fornece uma camada de UI amigável sobre o conjunto de scripts PowerShell disponíveis no repositório `crayes/azure-scripts`, facilitando a execução e monitoramento de tarefas administrativas.
+## 🚀 Funcionalidades
 
-## 🚀 Requisitos
+- **Lista de Scripts**: Visualize todos os scripts PowerShell organizados por categoria
+- **Execução Integrada**: Execute scripts diretamente da UI com output em tempo real
+- **Visualização de Código**: Veja o código fonte dos scripts antes de executar
+- **Multiplataforma**: Windows, macOS e Linux
+- **Seguro**: Implementa contextIsolation e preload script (best practices do Electron)
 
-- **Node.js** 18.x ou superior
-- **npm** 9.x ou superior
+## 📦 Requisitos
 
-## 📦 Instalação
+- **Node.js** 18 ou superior
+- **PowerShell Core** (pwsh) - [Instalar](https://github.com/PowerShell/PowerShell#get-powershell)
+  - macOS: `brew install powershell/tap/powershell`
+  - Windows: Já incluído ou via Microsoft Store
+  - Linux: [Instruções por distro](https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell-on-linux)
 
-1. Navegue até a pasta do projeto:
+## 🛠️ Instalação
+
 ```bash
-cd azure-scripts-ui
-```
+# Clonar o repositório
+git clone https://github.com/crayes/azure-scripts.git
+cd azure-scripts/azure-scripts-ui
 
-2. Instale as dependências:
-```bash
+# Instalar dependências
 npm install
-```
 
-## 🏃 Executar em Modo Desenvolvimento
-
-Para iniciar a aplicação em modo desenvolvimento:
-
-```bash
+# Executar em modo desenvolvimento
 npm run dev
-```
 
-Ou simplesmente:
-
-```bash
+# Ou executar normalmente
 npm start
 ```
 
-### Diferença entre `dev` e `start`:
-- **`npm run dev`**: Abre a aplicação com DevTools aberto automaticamente (útil para debugging)
-- **`npm start`**: Abre a aplicação em modo normal
-
-## 📦 Empacotar a Aplicação
-
-### Configuração Futura
-
-O empacotamento da aplicação será implementado usando `electron-builder` ou `electron-forge`. Para preparar:
-
-1. Instalar electron-builder:
-```bash
-npm install --save-dev electron-builder
-```
-
-2. Adicionar configuração ao `package.json`:
-```json
-"build": {
-  "appId": "com.azurescripts.ui",
-  "productName": "Azure Scripts UI",
-  "directories": {
-    "output": "dist"
-  },
-  "files": [
-    "main.js",
-    "index.html",
-    "renderer.js",
-    "styles.css",
-    "package.json"
-  ],
-  "win": {
-    "target": ["nsis"],
-    "icon": "assets/icon.ico"
-  },
-  "mac": {
-    "target": ["dmg"],
-    "icon": "assets/icon.icns"
-  },
-  "linux": {
-    "target": ["AppImage"],
-    "icon": "assets/icon.png"
-  }
-}
-```
-
-3. Atualizar script de build:
-```json
-"scripts": {
-  "build": "electron-builder",
-  "build:win": "electron-builder --win",
-  "build:mac": "electron-builder --mac",
-  "build:linux": "electron-builder --linux"
-}
-```
-
-4. Executar build:
-```bash
-npm run build
-```
-
-## 🏗️ Estrutura do Projeto
+## 📁 Estrutura do Projeto
 
 ```
 azure-scripts-ui/
-├── main.js           # Processo principal do Electron
-├── index.html        # Interface HTML principal
-├── renderer.js       # Script do processo renderer
-├── styles.css        # Estilos CSS da aplicação
-├── package.json      # Configuração do projeto Node.js
-└── README.md         # Este arquivo
+├── main.js          # Processo principal do Electron (IPC handlers, segurança)
+├── preload.js       # Ponte segura entre main e renderer (contextBridge)
+├── renderer.js      # Lógica da interface (usa window.electronAPI)
+├── index.html       # Layout da interface
+├── styles.css       # Estilos CSS
+├── package.json     # Dependências e scripts
+└── assets/          # Ícones e recursos
 ```
 
-## 🎯 Recursos Atuais
+## 🔒 Arquitetura de Segurança
 
-### Interface Inicial
-- ✅ Estrutura funcional Electron (main + renderer)
-- ✅ Interface responsiva com design moderno
-- ✅ Exibição de informações sobre os scripts Azure
-- ✅ Cards de recursos planejados para futuras funcionalidades
+O projeto segue as melhores práticas de segurança do Electron:
 
-### Recursos Planejados
-- 📊 **Auditoria Exchange**: Interface para executar e visualizar auditorias do Exchange Online
-- 🛡️ **Purview & Compliance**: Gerenciamento de políticas DLP
-- ☁️ **OneDrive & SharePoint**: Auditoria de segurança
-- 🔐 **Conditional Access**: Análise de políticas e troubleshooting
-- 💻 **Gestão de Dispositivos**: Remoção de dispositivos inativos
-- 🔄 **Hybrid Identity**: Rotação de chaves Kerberos
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     MAIN PROCESS                            │
+│  - Acesso total ao Node.js                                  │
+│  - IPC handlers para operações sensíveis                    │
+│  - Validação de caminhos de scripts                         │
+│  - Spawn de processos PowerShell                            │
+└────────────────────────┬────────────────────────────────────┘
+                         │ IPC (invoke/handle)
+┌────────────────────────▼────────────────────────────────────┐
+│                    PRELOAD SCRIPT                           │
+│  - contextBridge.exposeInMainWorld()                        │
+│  - API controlada: window.electronAPI                       │
+│  - Único ponto de comunicação                               │
+└────────────────────────┬────────────────────────────────────┘
+                         │ window.electronAPI
+┌────────────────────────▼────────────────────────────────────┐
+│                   RENDERER PROCESS                          │
+│  - SEM acesso direto ao Node.js                             │
+│  - Usa apenas window.electronAPI                            │
+│  - contextIsolation: true                                   │
+│  - nodeIntegration: false                                   │
+└─────────────────────────────────────────────────────────────┘
+```
 
-## 🔧 Scripts Disponíveis
+## 🎮 Uso
 
-| Script | Descrição |
-|--------|-----------|
-| `npm start` | Inicia a aplicação Electron |
-| `npm run dev` | Inicia em modo desenvolvimento com DevTools |
-| `npm run build` | Empacota a aplicação (a ser implementado) |
+1. **Selecionar Script**: Clique em um script na sidebar esquerda
+2. **Visualizar**: Clique em "👁️ Visualizar" para ver o código
+3. **Executar**: Clique em "▶️ Executar" para rodar o script
+4. **Output**: Acompanhe a saída em tempo real no console
 
-## 🌐 Plataformas Suportadas
+## 📋 API Disponível (preload.js)
 
-- **Windows** 10/11 (x64)
-- **macOS** 10.13+ (Intel e Apple Silicon)
-- **Linux** (Ubuntu, Fedora, Debian e derivados)
-
-## 🛠️ Desenvolvimento
-
-### Adicionar Novas Funcionalidades
-
-1. **Editar a interface**: Modifique `index.html` e `styles.css`
-2. **Adicionar lógica do renderer**: Edite `renderer.js`
-3. **Modificar comportamento do app**: Ajuste `main.js`
-
-### Debugging
-
-O modo desenvolvimento (`npm run dev`) abre automaticamente as DevTools do Chrome. Use para:
-- Inspecionar elementos HTML/CSS
-- Debugar JavaScript
-- Monitorar console logs
-- Analisar performance
-
-### Integração com Scripts PowerShell
-
-Para integrar os scripts PowerShell existentes, você pode:
-
-1. Usar `child_process` do Node.js:
 ```javascript
-const { exec } = require('child_process');
+// Obter lista de scripts
+const scripts = await window.electronAPI.getScripts();
 
-exec('pwsh -File ../scripts/Exchange/Exchange-Audit.ps1', (error, stdout, stderr) => {
-  if (error) {
-    console.error(`Erro: ${error}`);
-    return;
-  }
-  console.log(`Saída: ${stdout}`);
+// Executar script
+const result = await window.electronAPI.runScript(scriptPath, args);
+
+// Verificar PowerShell
+const psInfo = await window.electronAPI.checkPowerShell();
+
+// Listener de output em tempo real
+const cleanup = window.electronAPI.onScriptOutput((data) => {
+  console.log(data.type, data.data);
 });
+
+// Informações do sistema
+const sysInfo = await window.electronAPI.getSystemInfo();
 ```
 
-2. Ou usar bibliotecas como `node-powershell`:
+## 🏗️ Build para Distribuição
+
 ```bash
-npm install node-powershell
+# Build para a plataforma atual
+npm run build
+
+# Build específico por plataforma
+npm run build:mac    # macOS (DMG + ZIP)
+npm run build:win    # Windows (NSIS + Portable)
+npm run build:linux  # Linux (AppImage + DEB)
+
+# Gerar apenas o diretório (sem empacotamento)
+npm run pack
 ```
 
-## 📝 Notas Importantes
+Os arquivos de distribuição serão gerados em `dist/`.
 
-1. **Node Integration & Security**: Esta aplicação usa `nodeIntegration: true` e `contextIsolation: false` para facilitar o desenvolvimento inicial. 
-   
-   ⚠️ **Importante para Produção**: Antes de usar em produção, implemente `contextBridge` com `contextIsolation: true` para evitar vulnerabilidades de segurança (XSS). Exemplo:
-   
-   ```javascript
-   // preload.js
-   const { contextBridge } = require('electron');
-   const { exec } = require('child_process');
-   
-   contextBridge.exposeInMainWorld('api', {
-     runScript: (scriptPath) => {
-       return new Promise((resolve, reject) => {
-         exec(`pwsh -File ${scriptPath}`, (error, stdout, stderr) => {
-           if (error) reject(error);
-           else resolve(stdout);
-         });
-       });
-     }
-   });
-   ```
+## 🔧 Desenvolvimento
 
-2. **Content Security Policy**: Já configurado no HTML para proteger contra XSS.
+```bash
+# Modo desenvolvimento (abre DevTools automaticamente)
+npm run dev
 
-3. **Dependências**: O `package.json` usa Electron como `devDependency`. Para produção, considere movê-lo para `dependencies`.
+# Windows
+npm run dev:win
+```
+
+## 📝 Scripts PowerShell Suportados
+
+O app detecta automaticamente scripts `.ps1` nas seguintes pastas:
+
+- `scripts/Exchange/` - Auditoria e gestão do Exchange Online
+- `scripts/EntraID/` - Azure AD / Entra ID
+- `scripts/Purview/` - Compliance e DLP
+- `scripts/OneDrive/` - OneDrive for Business
+- `scripts/SharePoint/` - SharePoint Online
+- `scripts/DNS/` - Configurações DNS
+- `scripts/HybridIdentity/` - Identidade híbrida
+- `scripts/Remediation/` - Scripts de remediação
 
 ## 🤝 Contribuindo
 
-Para adicionar novos recursos ou melhorias:
-
-1. Crie uma branch para sua feature
-2. Faça suas alterações
-3. Teste localmente com `npm start`
-4. Submeta um Pull Request
+1. Fork o repositório
+2. Crie uma branch: `git checkout -b feature/nova-funcionalidade`
+3. Commit: `git commit -m 'feat: adiciona nova funcionalidade'`
+4. Push: `git push origin feature/nova-funcionalidade`
+5. Abra um Pull Request
 
 ## 📄 Licença
 
-MIT - Veja o arquivo LICENSE na raiz do repositório.
+MIT License - veja [LICENSE](../LICENSE) para detalhes.
 
-## 🔗 Links Úteis
+---
 
-- [Documentação Electron](https://www.electronjs.org/docs)
-- [Electron Builder](https://www.electron.build/)
-- [Repositório Principal](https://github.com/crayes/azure-scripts)
-- [Scripts PowerShell M365](../README.md)
-
-## 💡 Suporte
-
-Para dúvidas ou problemas, abra uma issue no repositório do GitHub.
+**Azure Scripts UI** - Simplificando a administração Microsoft 365 🚀
