@@ -2,7 +2,7 @@
 .SYNOPSIS
     Remediação de Segurança Microsoft 365 / Purview
 .DESCRIPTION
-    Versão 3.0 - Alinhada com Purview-Audit-PS7.ps1 v3.0
+    Versão 3.1 - Alinhada com Purview-Audit-PS7.ps1 v3.0
     
     Aplica configurações de segurança recomendadas:
     - Verifica Unified Audit Log (método atualizado 2025+)
@@ -16,7 +16,7 @@
 .AUTHOR
     M365 Security Toolkit - RFAA
 .VERSION
-    3.0 - Janeiro 2026 - Alinhado com Audit v3.0
+    3.1 - Janeiro 2026 - Fix parsing errors
 .EXAMPLE
     ./M365-Remediation.ps1
     ./M365-Remediation.ps1 -SkipConnection
@@ -54,7 +54,7 @@ function Write-Banner {
 ║                                                                          ║
 ║   🔧 REMEDIAÇÃO DE SEGURANÇA M365 / PURVIEW                              ║
 ║                                                                          ║
-║   Versão 3.0 - Janeiro 2026                                              ║
+║   Versão 3.1 - Janeiro 2026                                              ║
 ║   Alinhado com Purview-Audit-PS7.ps1 v3.0                                ║
 ║                                                                          ║
 ╚══════════════════════════════════════════════════════════════════════════╝
@@ -117,23 +117,23 @@ function Connect-ToServices {
     # Exchange Online
     try {
         $null = Get-OrganizationConfig -ErrorAction Stop
-        Write-Status "Exchange Online: Conectado" "Success"
+        Write-Status "Exchange Online - Conectado" "Success"
     }
     catch {
         Write-Status "Conectando ao Exchange Online..." "Action"
         Connect-ExchangeOnline -ShowBanner:$false -ErrorAction Stop
-        Write-Status "Exchange Online: Conectado" "Success"
+        Write-Status "Exchange Online - Conectado" "Success"
     }
     
     # Security & Compliance
     try {
         $null = Get-Label -ResultSize 1 -ErrorAction Stop 2>$null
-        Write-Status "Security & Compliance: Conectado" "Success"
+        Write-Status "Security & Compliance - Conectado" "Success"
     }
     catch {
         Write-Status "Conectando ao Security & Compliance..." "Action"
         Connect-IPPSSession -ShowBanner:$false -WarningAction SilentlyContinue -ErrorAction Stop
-        Write-Status "Security & Compliance: Conectado" "Success"
+        Write-Status "Security & Compliance - Conectado" "Success"
     }
 }
 
@@ -151,14 +151,14 @@ function Remediate-UnifiedAuditLog {
         $TestSearch = Search-UnifiedAuditLog -StartDate (Get-Date).AddDays(-1) -EndDate (Get-Date) -ResultSize 1 -ErrorAction Stop
         
         if ($null -ne $TestSearch) {
-            Write-Status "Unified Audit Log: ATIVO E FUNCIONANDO" "Success"
+            Write-Status "Unified Audit Log - ATIVO E FUNCIONANDO" "Success"
             Write-Status "Registros encontrados - nenhuma ação necessária" "Info"
             Save-Backup -Key "UnifiedAuditLog" -Value "Already Active"
             return
         }
         else {
             # Sem resultados mas sem erro = provavelmente ativo
-            Write-Status "Unified Audit Log: Provavelmente ativo (sem atividade recente)" "Warning"
+            Write-Status "Unified Audit Log - Provavelmente ativo (sem atividade recente)" "Warning"
             Save-Backup -Key "UnifiedAuditLog" -Value "Active (no recent data)"
             return
         }
@@ -167,7 +167,7 @@ function Remediate-UnifiedAuditLog {
         $ErrorMsg = $_.Exception.Message
         
         if ($ErrorMsg -match "not enabled|UnifiedAuditLogIngestionEnabled") {
-            Write-Status "Unified Audit Log: DESABILITADO" "Error"
+            Write-Status "Unified Audit Log - DESABILITADO" "Error"
             Write-Status "Tentando ativar..." "Action"
             
             if (-not $WhatIf) {
@@ -175,11 +175,11 @@ function Remediate-UnifiedAuditLog {
                     # Método 1: Via Set-AdminAuditLogConfig
                     Set-AdminAuditLogConfig -UnifiedAuditLogIngestionEnabled $true -ErrorAction Stop
                     Write-Status "Comando executado - aguarde até 24h para propagação" "Success"
-                    Add-Change -Category "AuditLog" -Action "Enable" -Details "Set-AdminAuditLogConfig -UnifiedAuditLogIngestionEnabled `$true"
+                    Add-Change -Category "AuditLog" -Action "Enable" -Details "Set-AdminAuditLogConfig -UnifiedAuditLogIngestionEnabled"
                 }
                 catch {
-                    Write-Status "Erro ao ativar via PowerShell: $($_.Exception.Message)" "Warning"
-                    Write-Status "AÇÃO MANUAL NECESSÁRIA:" "Warning"
+                    Write-Status "Erro ao ativar via PowerShell - $($_.Exception.Message)" "Warning"
+                    Write-Status "AÇÃO MANUAL NECESSÁRIA" "Warning"
                     Write-Host ""
                     Write-Host "    1. Acesse: https://compliance.microsoft.com" -ForegroundColor Yellow
                     Write-Host "    2. Vá em: Audit (menu lateral)" -ForegroundColor Yellow
@@ -188,11 +188,11 @@ function Remediate-UnifiedAuditLog {
                 }
             }
             else {
-                Write-Status "[WhatIf] Executaria: Set-AdminAuditLogConfig -UnifiedAuditLogIngestionEnabled `$true" "Skip"
+                Write-Status "[WhatIf] Executaria Set-AdminAuditLogConfig -UnifiedAuditLogIngestionEnabled" "Skip"
             }
         }
         else {
-            Write-Status "Erro ao verificar: $ErrorMsg" "Warning"
+            Write-Status "Erro ao verificar - $ErrorMsg" "Warning"
         }
     }
     
@@ -204,23 +204,23 @@ function Remediate-UnifiedAuditLog {
         Save-Backup -Key "MailboxAuditDisabled" -Value $OrgConfig.AuditDisabled
         
         if ($OrgConfig.AuditDisabled) {
-            Write-Status "Mailbox Audit: DESABILITADO" "Error"
+            Write-Status "Mailbox Audit - DESABILITADO" "Error"
             
             if (-not $WhatIf) {
                 Set-OrganizationConfig -AuditDisabled $false
-                Write-Status "Mailbox Audit: ATIVADO" "Success"
-                Add-Change -Category "AuditLog" -Action "Enable Mailbox Audit" -Details "Set-OrganizationConfig -AuditDisabled `$false"
+                Write-Status "Mailbox Audit - ATIVADO" "Success"
+                Add-Change -Category "AuditLog" -Action "Enable Mailbox Audit" -Details "Set-OrganizationConfig -AuditDisabled false"
             }
             else {
-                Write-Status "[WhatIf] Executaria: Set-OrganizationConfig -AuditDisabled `$false" "Skip"
+                Write-Status "[WhatIf] Executaria Set-OrganizationConfig -AuditDisabled false" "Skip"
             }
         }
         else {
-            Write-Status "Mailbox Audit: Já está habilitado" "Success"
+            Write-Status "Mailbox Audit - Já está habilitado" "Success"
         }
     }
     catch {
-        Write-Status "Erro ao verificar Mailbox Audit: $($_.Exception.Message)" "Warning"
+        Write-Status "Erro ao verificar Mailbox Audit - $($_.Exception.Message)" "Warning"
     }
 }
 
@@ -235,12 +235,12 @@ function Remediate-RetentionPolicies {
         $ExistingPolicies = Get-RetentionCompliancePolicy -WarningAction SilentlyContinue -ErrorAction Stop
         $PolicyCount = if ($ExistingPolicies) { @($ExistingPolicies).Count } else { 0 }
         
-        Write-Status "Políticas de retenção existentes: $PolicyCount" "Info"
+        Write-Status "Políticas de retenção existentes - $PolicyCount" "Info"
         Save-Backup -Key "RetentionPoliciesCount" -Value $PolicyCount
         
         if ($ExistingPolicies) {
             foreach ($Policy in $ExistingPolicies) {
-                Write-Status "  • $($Policy.Name)" "Info"
+                Write-Status "  - $($Policy.Name)" "Info"
             }
         }
         
@@ -248,16 +248,16 @@ function Remediate-RetentionPolicies {
         # POLÍTICA 1: Teams Messages (1 ano)
         # ============================================
         
-        $TeamsRetentionName = "Retenção Teams - Mensagens 1 Ano"
+        $TeamsRetentionName = "Retencao Teams - Mensagens 1 Ano"
         $ExistingTeams = $ExistingPolicies | Where-Object { $_.Name -eq $TeamsRetentionName }
         
         if (-not $ExistingTeams) {
-            Write-Status "Criando: $TeamsRetentionName" "Action"
+            Write-Status "Criando - $TeamsRetentionName" "Action"
             
             if (-not $WhatIf) {
                 try {
                     New-RetentionCompliancePolicy -Name $TeamsRetentionName `
-                        -Comment "Retém mensagens do Teams por 1 ano para compliance" `
+                        -Comment "Retem mensagens do Teams por 1 ano para compliance" `
                         -TeamsChannelLocation All `
                         -TeamsChatLocation All `
                         -Enabled $true `
@@ -270,35 +270,35 @@ function Remediate-RetentionPolicies {
                         -RetentionDurationDisplayHint Days `
                         -ErrorAction Stop
                     
-                    Write-Status "$TeamsRetentionName: CRIADA" "Success"
+                    Write-Status "$TeamsRetentionName - CRIADA" "Success"
                     Add-Change -Category "Retention" -Action "Create Policy" -Details $TeamsRetentionName
                 }
                 catch {
-                    Write-Status "Erro ao criar política Teams: $($_.Exception.Message)" "Error"
+                    Write-Status "Erro ao criar politica Teams - $($_.Exception.Message)" "Error"
                 }
             }
             else {
-                Write-Status "[WhatIf] Criaria política: $TeamsRetentionName" "Skip"
+                Write-Status "[WhatIf] Criaria politica - $TeamsRetentionName" "Skip"
             }
         }
         else {
-            Write-Status "$TeamsRetentionName: Já existe" "Success"
+            Write-Status "$TeamsRetentionName - Ja existe" "Success"
         }
         
         # ============================================
         # POLÍTICA 2: Dados Sensíveis (7 anos)
         # ============================================
         
-        $SensitiveRetentionName = "Retenção Dados Sensíveis - 7 Anos"
+        $SensitiveRetentionName = "Retencao Dados Sensiveis - 7 Anos"
         $ExistingSensitive = $ExistingPolicies | Where-Object { $_.Name -eq $SensitiveRetentionName }
         
         if (-not $ExistingSensitive) {
-            Write-Status "Criando: $SensitiveRetentionName" "Action"
+            Write-Status "Criando - $SensitiveRetentionName" "Action"
             
             if (-not $WhatIf) {
                 try {
                     New-RetentionCompliancePolicy -Name $SensitiveRetentionName `
-                        -Comment "Retém dados classificados como Highly Confidential por 7 anos (compliance legal)" `
+                        -Comment "Retem dados classificados como Highly Confidential por 7 anos (compliance legal)" `
                         -ExchangeLocation All `
                         -SharePointLocation All `
                         -OneDriveLocation All `
@@ -313,16 +313,16 @@ function Remediate-RetentionPolicies {
                         -ContentMatchQuery "SensitivityLabel:Highly*" `
                         -ErrorAction Stop
                     
-                    Write-Status "$SensitiveRetentionName: CRIADA" "Success"
+                    Write-Status "$SensitiveRetentionName - CRIADA" "Success"
                     Add-Change -Category "Retention" -Action "Create Policy" -Details $SensitiveRetentionName
                 }
                 catch {
                     if ($_.Exception.Message -match "ContentMatchQuery") {
                         # Fallback sem query de label
-                        Write-Status "Criando versão simplificada (sem filtro de label)..." "Warning"
+                        Write-Status "Criando versao simplificada (sem filtro de label)..." "Warning"
                         
                         New-RetentionCompliancePolicy -Name $SensitiveRetentionName `
-                            -Comment "Retém todos os dados por 7 anos (compliance legal)" `
+                            -Comment "Retem todos os dados por 7 anos (compliance legal)" `
                             -ExchangeLocation All `
                             -SharePointLocation All `
                             -OneDriveLocation All `
@@ -336,36 +336,36 @@ function Remediate-RetentionPolicies {
                             -RetentionDurationDisplayHint Days `
                             -ErrorAction Stop
                         
-                        Write-Status "$SensitiveRetentionName: CRIADA (sem filtro)" "Success"
+                        Write-Status "$SensitiveRetentionName - CRIADA (sem filtro)" "Success"
                         Add-Change -Category "Retention" -Action "Create Policy" -Details "$SensitiveRetentionName (simplified)"
                     }
                     else {
-                        Write-Status "Erro ao criar política: $($_.Exception.Message)" "Error"
+                        Write-Status "Erro ao criar politica - $($_.Exception.Message)" "Error"
                     }
                 }
             }
             else {
-                Write-Status "[WhatIf] Criaria política: $SensitiveRetentionName" "Skip"
+                Write-Status "[WhatIf] Criaria politica - $SensitiveRetentionName" "Skip"
             }
         }
         else {
-            Write-Status "$SensitiveRetentionName: Já existe" "Success"
+            Write-Status "$SensitiveRetentionName - Ja existe" "Success"
         }
         
         # ============================================
         # POLÍTICA 3: SharePoint/OneDrive Geral (3 anos)
         # ============================================
         
-        $GeneralRetentionName = "Retenção Documentos - 3 Anos"
+        $GeneralRetentionName = "Retencao Documentos - 3 Anos"
         $ExistingGeneral = $ExistingPolicies | Where-Object { $_.Name -eq $GeneralRetentionName }
         
         if (-not $ExistingGeneral) {
-            Write-Status "Criando: $GeneralRetentionName" "Action"
+            Write-Status "Criando - $GeneralRetentionName" "Action"
             
             if (-not $WhatIf) {
                 try {
                     New-RetentionCompliancePolicy -Name $GeneralRetentionName `
-                        -Comment "Retém documentos do SharePoint e OneDrive por 3 anos" `
+                        -Comment "Retem documentos do SharePoint e OneDrive por 3 anos" `
                         -SharePointLocation All `
                         -OneDriveLocation All `
                         -Enabled $true `
@@ -378,28 +378,28 @@ function Remediate-RetentionPolicies {
                         -RetentionDurationDisplayHint Days `
                         -ErrorAction Stop
                     
-                    Write-Status "$GeneralRetentionName: CRIADA" "Success"
+                    Write-Status "$GeneralRetentionName - CRIADA" "Success"
                     Add-Change -Category "Retention" -Action "Create Policy" -Details $GeneralRetentionName
                 }
                 catch {
-                    Write-Status "Erro ao criar política: $($_.Exception.Message)" "Error"
+                    Write-Status "Erro ao criar politica - $($_.Exception.Message)" "Error"
                 }
             }
             else {
-                Write-Status "[WhatIf] Criaria política: $GeneralRetentionName" "Skip"
+                Write-Status "[WhatIf] Criaria politica - $GeneralRetentionName" "Skip"
             }
         }
         else {
-            Write-Status "$GeneralRetentionName: Já existe" "Success"
+            Write-Status "$GeneralRetentionName - Ja existe" "Success"
         }
         
         # Verificação final
         $FinalPolicies = Get-RetentionCompliancePolicy -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
         $FinalCount = if ($FinalPolicies) { @($FinalPolicies).Count } else { 0 }
-        Write-Status "Total de políticas após remediação: $FinalCount" "Info"
+        Write-Status "Total de politicas apos remediacao - $FinalCount" "Info"
     }
     catch {
-        Write-Status "Erro ao configurar retenção: $($_.Exception.Message)" "Error"
+        Write-Status "Erro ao configurar retencao - $($_.Exception.Message)" "Error"
     }
 }
 
@@ -414,22 +414,22 @@ function Remediate-DLPPolicies {
         $ExistingDLP = Get-DlpCompliancePolicy -WarningAction SilentlyContinue -ErrorAction Stop
         $DLPCount = if ($ExistingDLP) { @($ExistingDLP).Count } else { 0 }
         
-        Write-Status "Políticas DLP existentes: $DLPCount" "Info"
+        Write-Status "Politicas DLP existentes - $DLPCount" "Info"
         Save-Backup -Key "DLPPoliciesCount" -Value $DLPCount
         
         if ($DLPCount -ge 3) {
-            Write-Status "Já existem políticas DLP suficientes" "Success"
+            Write-Status "Ja existem politicas DLP suficientes" "Success"
             foreach ($Policy in $ExistingDLP) {
-                $Status = if ($Policy.Enabled) { "✅" } else { "❌" }
+                $Status = if ($Policy.Enabled) { "[ON]" } else { "[OFF]" }
                 Write-Status "  $Status $($Policy.Name)" "Info"
             }
             return
         }
         
         # DLP para CPF Brasileiro
-        $CPFPolicyName = "DLP - Proteção CPF Brasileiro"
+        $CPFPolicyName = "DLP - Protecao CPF Brasileiro"
         if (-not ($ExistingDLP | Where-Object { $_.Name -eq $CPFPolicyName })) {
-            Write-Status "Criando: $CPFPolicyName" "Action"
+            Write-Status "Criando - $CPFPolicyName" "Action"
             
             if (-not $WhatIf) {
                 try {
@@ -442,30 +442,30 @@ function Remediate-DLPPolicies {
                         -Mode Enable `
                         -ErrorAction Stop
                     
-                    New-DlpComplianceRule -Name "Detectar CPF - Alta Confiança" `
+                    New-DlpComplianceRule -Name "Detectar CPF - Alta Confianca" `
                         -Policy $CPFPolicyName `
                         -ContentContainsSensitiveInformation @{Name="Brazil CPF Number"; minCount="1"; minConfidence="85"} `
                         -BlockAccess $true `
                         -NotifyUser "Owner" `
-                        -NotifyPolicyTipCustomText "⚠️ Este documento contém CPF e está protegido pela política de segurança." `
+                        -NotifyPolicyTipCustomText "Este documento contem CPF e esta protegido pela politica de seguranca." `
                         -ErrorAction Stop
                     
-                    Write-Status "$CPFPolicyName: CRIADA" "Success"
+                    Write-Status "$CPFPolicyName - CRIADA" "Success"
                     Add-Change -Category "DLP" -Action "Create Policy" -Details $CPFPolicyName
                 }
                 catch {
-                    Write-Status "Erro: $($_.Exception.Message)" "Error"
+                    Write-Status "Erro - $($_.Exception.Message)" "Error"
                 }
             }
             else {
-                Write-Status "[WhatIf] Criaria: $CPFPolicyName" "Skip"
+                Write-Status "[WhatIf] Criaria - $CPFPolicyName" "Skip"
             }
         }
         
         # DLP para CNPJ
-        $CNPJPolicyName = "DLP - Proteção CNPJ"
+        $CNPJPolicyName = "DLP - Protecao CNPJ"
         if (-not ($ExistingDLP | Where-Object { $_.Name -eq $CNPJPolicyName })) {
-            Write-Status "Criando: $CNPJPolicyName" "Action"
+            Write-Status "Criando - $CNPJPolicyName" "Action"
             
             if (-not $WhatIf) {
                 try {
@@ -486,27 +486,27 @@ function Remediate-DLPPolicies {
                         -GenerateIncidentReport "SiteAdmin" `
                         -ErrorAction Stop
                     
-                    Write-Status "$CNPJPolicyName: CRIADA" "Success"
+                    Write-Status "$CNPJPolicyName - CRIADA" "Success"
                     Add-Change -Category "DLP" -Action "Create Policy" -Details $CNPJPolicyName
                 }
                 catch {
-                    Write-Status "Erro: $($_.Exception.Message)" "Error"
+                    Write-Status "Erro - $($_.Exception.Message)" "Error"
                 }
             }
             else {
-                Write-Status "[WhatIf] Criaria: $CNPJPolicyName" "Skip"
+                Write-Status "[WhatIf] Criaria - $CNPJPolicyName" "Skip"
             }
         }
         
         # DLP para Cartão de Crédito
-        $CCPolicyName = "DLP - Proteção Cartão de Crédito"
+        $CCPolicyName = "DLP - Protecao Cartao de Credito"
         if (-not ($ExistingDLP | Where-Object { $_.Name -eq $CCPolicyName })) {
-            Write-Status "Criando: $CCPolicyName" "Action"
+            Write-Status "Criando - $CCPolicyName" "Action"
             
             if (-not $WhatIf) {
                 try {
                     New-DlpCompliancePolicy -Name $CCPolicyName `
-                        -Comment "Protege números de cartão de crédito" `
+                        -Comment "Protege numeros de cartao de credito" `
                         -ExchangeLocation All `
                         -SharePointLocation All `
                         -OneDriveLocation All `
@@ -514,27 +514,27 @@ function Remediate-DLPPolicies {
                         -Mode Enable `
                         -ErrorAction Stop
                     
-                    New-DlpComplianceRule -Name "Detectar Cartão de Crédito" `
+                    New-DlpComplianceRule -Name "Detectar Cartao de Credito" `
                         -Policy $CCPolicyName `
                         -ContentContainsSensitiveInformation @{Name="Credit Card Number"; minCount="1"; minConfidence="85"} `
                         -BlockAccess $true `
                         -NotifyUser "Owner" `
                         -ErrorAction Stop
                     
-                    Write-Status "$CCPolicyName: CRIADA" "Success"
+                    Write-Status "$CCPolicyName - CRIADA" "Success"
                     Add-Change -Category "DLP" -Action "Create Policy" -Details $CCPolicyName
                 }
                 catch {
-                    Write-Status "Erro: $($_.Exception.Message)" "Error"
+                    Write-Status "Erro - $($_.Exception.Message)" "Error"
                 }
             }
             else {
-                Write-Status "[WhatIf] Criaria: $CCPolicyName" "Skip"
+                Write-Status "[WhatIf] Criaria - $CCPolicyName" "Skip"
             }
         }
     }
     catch {
-        Write-Status "Erro ao configurar DLP: $($_.Exception.Message)" "Error"
+        Write-Status "Erro ao configurar DLP - $($_.Exception.Message)" "Error"
     }
 }
 
@@ -550,24 +550,24 @@ function Remediate-OWAExternal {
         Save-Backup -Key "WacExternalServicesEnabled" -Value $OwaPolicy.WacExternalServicesEnabled
         
         if ($OwaPolicy.WacExternalServicesEnabled) {
-            Write-Status "WacExternalServicesEnabled: TRUE (não seguro)" "Warning"
+            Write-Status "WacExternalServicesEnabled = TRUE (nao seguro)" "Warning"
             Write-Status "Desabilitando provedores externos..." "Action"
             
             if (-not $WhatIf) {
                 Set-OwaMailboxPolicy -Identity "OwaMailboxPolicy-Default" -WacExternalServicesEnabled $false
-                Write-Status "Provedores externos: DESABILITADOS" "Success"
-                Add-Change -Category "OWA" -Action "Disable External" -Details "WacExternalServicesEnabled = `$false"
+                Write-Status "Provedores externos - DESABILITADOS" "Success"
+                Add-Change -Category "OWA" -Action "Disable External" -Details "WacExternalServicesEnabled = false"
             }
             else {
                 Write-Status "[WhatIf] Desabilitaria WacExternalServicesEnabled" "Skip"
             }
         }
         else {
-            Write-Status "Provedores externos: Já desabilitado" "Success"
+            Write-Status "Provedores externos - Ja desabilitado" "Success"
         }
     }
     catch {
-        Write-Status "Erro: $($_.Exception.Message)" "Error"
+        Write-Status "Erro - $($_.Exception.Message)" "Error"
     }
 }
 
@@ -583,28 +583,28 @@ function Remediate-AlertPolicies {
             Name = "Custom - Nova Regra Inbox Suspeita"
             Category = "ThreatManagement"
             Operation = "New-InboxRule"
-            Description = "Alerta quando nova regra de inbox é criada (possível comprometimento)"
+            Description = "Alerta quando nova regra de inbox e criada (possivel comprometimento)"
             Severity = "High"
         },
         @{
-            Name = "Custom - Permissão Mailbox Delegada"
+            Name = "Custom - Permissao Mailbox Delegada"
             Category = "ThreatManagement"
             Operation = "Add-MailboxPermission"
-            Description = "Alerta quando permissões de mailbox são alteradas"
+            Description = "Alerta quando permissoes de mailbox sao alteradas"
             Severity = "Medium"
         },
         @{
             Name = "Custom - Forwarding Externo Configurado"
             Category = "ThreatManagement"
             Operation = "Set-Mailbox"
-            Description = "Alerta quando forwarding é configurado"
+            Description = "Alerta quando forwarding e configurado"
             Severity = "High"
         },
         @{
-            Name = "Custom - Admin Role Atribuída"
+            Name = "Custom - Admin Role Atribuida"
             Category = "ThreatManagement"
             Operation = "Add-RoleGroupMember"
-            Description = "Alerta quando role de admin é atribuída"
+            Description = "Alerta quando role de admin e atribuida"
             Severity = "High"
         }
     )
@@ -614,7 +614,7 @@ function Remediate-AlertPolicies {
             $Existing = Get-ProtectionAlert -Identity $Alert.Name -ErrorAction SilentlyContinue
             
             if (-not $Existing) {
-                Write-Status "Criando: $($Alert.Name)" "Action"
+                Write-Status "Criando - $($Alert.Name)" "Action"
                 
                 if (-not $WhatIf) {
                     New-ProtectionAlert -Name $Alert.Name `
@@ -627,19 +627,19 @@ function Remediate-AlertPolicies {
                         -NotificationEnabled $true `
                         -ErrorAction SilentlyContinue
                     
-                    Write-Status "$($Alert.Name): CRIADO" "Success"
+                    Write-Status "$($Alert.Name) - CRIADO" "Success"
                     Add-Change -Category "Alerts" -Action "Create Alert" -Details $Alert.Name
                 }
                 else {
-                    Write-Status "[WhatIf] Criaria: $($Alert.Name)" "Skip"
+                    Write-Status "[WhatIf] Criaria - $($Alert.Name)" "Skip"
                 }
             }
             else {
-                Write-Status "$($Alert.Name): Já existe" "Success"
+                Write-Status "$($Alert.Name) - Ja existe" "Success"
             }
         }
         catch {
-            Write-Status "Erro ao criar '$($Alert.Name)': $($_.Exception.Message)" "Warning"
+            Write-Status "Erro ao criar $($Alert.Name) - $($_.Exception.Message)" "Warning"
         }
     }
 }
@@ -656,45 +656,45 @@ function Show-Summary {
     # Unified Audit Log
     try {
         $AuditTest = Search-UnifiedAuditLog -StartDate (Get-Date).AddDays(-1) -EndDate (Get-Date) -ResultSize 1 -ErrorAction SilentlyContinue
-        $AuditStatus = if ($AuditTest) { "✅ ATIVO" } else { "⚠️ Verificar manualmente" }
+        $AuditStatus = if ($AuditTest) { "ATIVO" } else { "Verificar manualmente" }
     }
     catch {
-        $AuditStatus = "⚠️ Verificar no portal"
+        $AuditStatus = "Verificar no portal"
     }
-    Write-Host "  Unified Audit Log:     $AuditStatus" -ForegroundColor $(if ($AuditStatus -match "ATIVO") { "Green" } else { "Yellow" })
+    Write-Host "  Unified Audit Log:     $AuditStatus" -ForegroundColor $(if ($AuditStatus -eq "ATIVO") { "Green" } else { "Yellow" })
     
     # Mailbox Audit
     $MailboxAudit = (Get-OrganizationConfig).AuditDisabled
-    $MailboxStatus = if (-not $MailboxAudit) { "✅ ATIVO" } else { "❌ DESATIVADO" }
+    $MailboxStatus = if (-not $MailboxAudit) { "ATIVO" } else { "DESATIVADO" }
     Write-Host "  Mailbox Audit:         $MailboxStatus" -ForegroundColor $(if (-not $MailboxAudit) { "Green" } else { "Red" })
     
     # Retention Policies
     $RetentionCount = @(Get-RetentionCompliancePolicy -WarningAction SilentlyContinue -ErrorAction SilentlyContinue).Count
-    $RetentionStatus = if ($RetentionCount -ge 3) { "✅ $RetentionCount políticas" } else { "⚠️ $RetentionCount políticas" }
-    Write-Host "  Políticas Retenção:    $RetentionStatus" -ForegroundColor $(if ($RetentionCount -ge 3) { "Green" } else { "Yellow" })
+    $RetentionStatus = if ($RetentionCount -ge 3) { "$RetentionCount politicas" } else { "$RetentionCount politicas (precisa mais)" }
+    Write-Host "  Politicas Retencao:    $RetentionStatus" -ForegroundColor $(if ($RetentionCount -ge 3) { "Green" } else { "Yellow" })
     
     # DLP
     $DLPCount = @(Get-DlpCompliancePolicy -WarningAction SilentlyContinue -ErrorAction SilentlyContinue).Count
-    $DLPStatus = if ($DLPCount -ge 3) { "✅ $DLPCount políticas" } else { "⚠️ $DLPCount políticas" }
-    Write-Host "  Políticas DLP:         $DLPStatus" -ForegroundColor $(if ($DLPCount -ge 3) { "Green" } else { "Yellow" })
+    $DLPStatus = if ($DLPCount -ge 3) { "$DLPCount politicas" } else { "$DLPCount politicas (precisa mais)" }
+    Write-Host "  Politicas DLP:         $DLPStatus" -ForegroundColor $(if ($DLPCount -ge 3) { "Green" } else { "Yellow" })
     
     # OWA External
     $OwaExternal = (Get-OwaMailboxPolicy -Identity "OwaMailboxPolicy-Default" -ErrorAction SilentlyContinue).WacExternalServicesEnabled
-    $OwaStatus = if (-not $OwaExternal) { "✅ BLOQUEADO" } else { "❌ PERMITIDO" }
+    $OwaStatus = if (-not $OwaExternal) { "BLOQUEADO" } else { "PERMITIDO" }
     Write-Host "  OWA Externos:          $OwaStatus" -ForegroundColor $(if (-not $OwaExternal) { "Green" } else { "Red" })
     
     Write-Host ""
     
     # Mudanças realizadas
     if ($Script:Changes.Count -gt 0) {
-        Write-Host "  📝 ALTERAÇÕES REALIZADAS:" -ForegroundColor Cyan
+        Write-Host "  ALTERACOES REALIZADAS:" -ForegroundColor Cyan
         foreach ($Change in $Script:Changes) {
-            Write-Host "     [$($Change.Timestamp)] $($Change.Category): $($Change.Action)" -ForegroundColor White
+            Write-Host "     [$($Change.Timestamp)] $($Change.Category) - $($Change.Action)" -ForegroundColor White
         }
         Write-Host ""
     }
     
-    Write-Host "  📁 Backup salvo em: $BackupPath" -ForegroundColor DarkGray
+    Write-Host "  Backup salvo em: $BackupPath" -ForegroundColor DarkGray
     Write-Host ""
 }
 
@@ -702,12 +702,12 @@ function Show-RollbackInstructions {
     Write-Section "🔙" "INSTRUÇÕES DE ROLLBACK"
     
     Write-Host ""
-    Write-Host "  Para reverter alterações:" -ForegroundColor Yellow
+    Write-Host "  Para reverter alteracoes:" -ForegroundColor Yellow
     Write-Host ""
-    Write-Host "  # Políticas de Retenção" -ForegroundColor DarkGray
-    Write-Host '  Get-RetentionCompliancePolicy | Where-Object {$_.Name -like "Retenção*"} | Remove-RetentionCompliancePolicy' -ForegroundColor White
+    Write-Host "  # Politicas de Retencao" -ForegroundColor DarkGray
+    Write-Host '  Get-RetentionCompliancePolicy | Where-Object {$_.Name -like "Retencao*"} | Remove-RetentionCompliancePolicy' -ForegroundColor White
     Write-Host ""
-    Write-Host "  # Políticas DLP" -ForegroundColor DarkGray
+    Write-Host "  # Politicas DLP" -ForegroundColor DarkGray
     Write-Host '  Get-DlpCompliancePolicy | Where-Object {$_.Name -like "DLP -*"} | Remove-DlpCompliancePolicy' -ForegroundColor White
     Write-Host ""
     Write-Host "  # OWA External Services" -ForegroundColor DarkGray
@@ -727,7 +727,7 @@ function Start-Remediation {
     Write-Banner
     
     if ($WhatIf) {
-        Write-Host "  ⚠️  MODO SIMULAÇÃO (WhatIf) - Nenhuma alteração será feita" -ForegroundColor Yellow
+        Write-Host "  MODO SIMULACAO (WhatIf) - Nenhuma alteracao sera feita" -ForegroundColor Yellow
         Write-Host ""
     }
     
@@ -736,7 +736,7 @@ function Start-Remediation {
         Connect-ToServices
     }
     else {
-        Write-Status "Pulando conexão (usando sessão existente)" "Skip"
+        Write-Status "Pulando conexao (usando sessao existente)" "Skip"
     }
     
     # Executar remediações
@@ -759,7 +759,7 @@ function Start-Remediation {
     Show-RollbackInstructions
     
     Write-Host "═══════════════════════════════════════════════════════════════════" -ForegroundColor Green
-    Write-Host "  ✅ REMEDIAÇÃO CONCLUÍDA!" -ForegroundColor Green
+    Write-Host "  REMEDIACAO CONCLUIDA!" -ForegroundColor Green
     Write-Host "═══════════════════════════════════════════════════════════════════" -ForegroundColor Green
     Write-Host ""
 }
