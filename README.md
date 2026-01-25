@@ -30,6 +30,13 @@ Este toolkit foi desenvolvido para administradores de TI que gerenciam múltiplo
 - **Remediar** problemas de forma automatizada
 - **Documentar** o estado de segurança do ambiente
 
+### ✨ Novidades v4.0
+
+- **Detecção automática de licenças** - Scripts identificam E5/E3/Business Premium automaticamente
+- **Score inteligente** - Calculado apenas com recursos disponíveis na licença
+- **Zero erros de licença** - Pula automaticamente recursos não licenciados
+- **Alertas adaptativos** - Usa alertas básicos ou avançados conforme licença
+
 ### Cenários de Uso
 
 | Cenário | Scripts Recomendados |
@@ -43,6 +50,7 @@ Este toolkit foi desenvolvido para administradores de TI que gerenciam múltiplo
 | Manutenção Hybrid Identity | `Rotate-KerberosKey-SSO.ps1` |
 | **Análise de Conditional Access** | `Analyze-CA-Policies.ps1` |
 | **Troubleshooting erro 53003** | `Analyze-CA-Policies.ps1` |
+| **Verificar capacidades do tenant** | `Get-TenantCapabilities.ps1` |
 
 ---
 
@@ -109,6 +117,57 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/crayes/azure-scripts/m
 ---
 
 ## 📂 Scripts Disponíveis
+
+### 🔍 Módulo de Detecção de Capacidades (v4.0)
+
+#### `Get-TenantCapabilities.ps1` ⭐ NOVO
+Detecta automaticamente as capacidades e licenças disponíveis no tenant:
+
+- Identifica licença (E5, E3, Business Premium, Basic)
+- Testa disponibilidade de cada recurso de compliance
+- Retorna lista de itens auditáveis e remediáveis
+- Usado automaticamente pelos scripts v4.0
+
+```powershell
+# Uso standalone
+./scripts/Modules/Get-TenantCapabilities.ps1
+
+# Modo silencioso (retorna objeto)
+$Caps = ./scripts/Modules/Get-TenantCapabilities.ps1 -Silent
+
+# Verificar recurso específico
+if ($Caps.Capabilities.DLP.Available) {
+    Write-Host "DLP disponível!"
+}
+
+# Ver licença detectada
+$Caps.License.Probable  # "Microsoft 365 E5 ou equivalente"
+```
+
+**Output visual:**
+```
+╔══════════════════════════════════════════════════════════════════╗
+║  🔍 DETECTANDO CAPACIDADES DO TENANT                             ║
+╚══════════════════════════════════════════════════════════════════╝
+
+  Tenant: Rayes Fagundes Advogados Associados
+  Domínio: rfaa.onmicrosoft.com
+  Licença: Microsoft 365 E5 ou equivalente (Confiança: Alta)
+
+  ┌────────────────────────────────┬────────────┬─────────────────────┐
+  │ Recurso                        │ Status     │ Detalhes            │
+  ├────────────────────────────────┼────────────┼─────────────────────┤
+  │ DLP                            │ ✅ Disponível│ 3 políticas        │
+  │ Sensitivity Labels             │ ✅ Disponível│ 5 labels           │
+  │ Alert Policies (Advanced)      │ ✅ Disponível│                    │
+  │ Insider Risk                   │ ✅ Disponível│ 0 políticas        │
+  └────────────────────────────────┴────────────┴─────────────────────┘
+
+  📋 PODE AUDITAR: DLP, SensitivityLabels, Retention, AlertPolicies
+  🔧 PODE REMEDIAR: DLP, Retention, AlertPolicies, AuditLog
+```
+
+---
 
 ### ☁️ OneDrive / SharePoint Online
 
@@ -207,44 +266,117 @@ Disconnect-ExchangeOnline -Confirm:$false
 
 ### 🛡️ Microsoft Purview
 
-#### `Purview-Audit-PS7.ps1`
-Auditoria abrangente do Microsoft Purview:
+#### `Purview-Audit-PS7.ps1` (v4.0) ⭐ ATUALIZADO
+Auditoria abrangente do Microsoft Purview com **detecção automática de capacidades**:
+
 - Políticas DLP
 - Configurações de Audit Log
 - Políticas de retenção
 - Labels de sensibilidade
 - Alertas de segurança
-- Safe Links e Safe Attachments
+- Insider Risk Management
+- eDiscovery
+- Communication Compliance
+
+**Novidades v4.0:**
+- ✅ **Detecção automática de licença** - Identifica E5/E3/Business automaticamente
+- ✅ **Score inteligente** - Calculado apenas com recursos DISPONÍVEIS
+- ✅ **Sem erros de licença** - Pula seções não licenciadas automaticamente
+- ✅ **Relatório claro** - Mostra o que foi auditado vs pulado
+- ✅ Integração com `Get-TenantCapabilities.ps1`
 
 ```powershell
-# Execução padrão
+# Execução padrão (detecta capacidades automaticamente)
 ./scripts/Purview/Purview-Audit-PS7.ps1
+
+# Se já estiver conectado
+./scripts/Purview/Purview-Audit-PS7.ps1 -SkipConnection
+
+# Pular detecção de capacidades (tenta auditar tudo)
+./scripts/Purview/Purview-Audit-PS7.ps1 -SkipCapabilityCheck
 
 # Com pasta de saída customizada
 ./scripts/Purview/Purview-Audit-PS7.ps1 -OutputPath "./MeuRelatorio"
 ```
 
+**Output v4.0:**
+```
+  📊 SCORES POR CATEGORIA
+  ─────────────────────────────────────────────
+  Data Loss Prevention          [████████████████████] 95%
+  Unified Audit Log             [████████████████████] 100%
+  Políticas de Retenção         [████████████░░░░░░░░] 60%
+  Labels de Sensibilidade       [████████████████████] 100%
+  Insider Risk                  [░░░░░░░░░░░░░░░░░░░░] N/A (não licenciado)
+  ─────────────────────────────────────────────
+  SCORE GERAL (licenciados)     [████████████████░░░░] 89%
+
+  ⏭️  CATEGORIAS PULADAS (não licenciadas):
+     InsiderRisk, CommunicationCompliance
+```
+
 **Saída:**
-- `audit-results.json` - Dados estruturados
+- `audit-results.json` - Dados estruturados com info de licença
 - `recommendations.csv` - Lista de recomendações priorizadas
+- `SUMMARY.md` - Relatório markdown
 
 ---
 
 ### 🔧 Remediação
 
-#### `M365-Remediation.ps1`
-Aplica configurações de segurança recomendadas:
+#### `M365-Remediation.ps1` (v4.0) ⭐ ATUALIZADO
+Aplica configurações de segurança recomendadas com **detecção automática de capacidades**:
+
 - ✅ Ativa Unified Audit Log
-- ✅ Desabilita provedores externos no OWA
-- ✅ Cria políticas DLP para dados brasileiros (CPF, CNPJ, RG)
-- ✅ Configura alertas de segurança
+- ✅ Configura Mailbox Audit
+- ✅ Cria políticas de Retenção (se licenciado)
+- ✅ Cria políticas DLP para dados brasileiros (CPF, CNPJ) (se licenciado)
+- ✅ Desabilita provedores externos no OWA (opcional)
+- ✅ Configura alertas de segurança (básicos ou avançados conforme licença)
+
+**Novidades v4.0:**
+- ✅ **Detecção automática de licença** - Não tenta criar DLP em tenant sem licença
+- ✅ **Alertas adaptativos** - Usa `AggregationType=None` (básico) ou `SimpleAggregation` (E5)
+- ✅ **Sem erros de licença** - Pula remediações não disponíveis
+- ✅ **Relatório claro** - Mostra o que foi remediado vs pulado
+- ✅ Integração com `Get-TenantCapabilities.ps1`
 
 ```powershell
-# Execução com backup automático
+# Execução padrão (detecta capacidades automaticamente)
 ./scripts/Remediation/M365-Remediation.ps1
 
-# O script cria backup antes de cada alteração
-# Backup salvo em: ./M365-Backup_YYYYMMDD_HHMMSS.json
+# Se já estiver conectado
+./scripts/Remediation/M365-Remediation.ps1 -SkipConnection
+
+# DLP em modo auditoria (não bloqueia, só reporta)
+./scripts/Remediation/M365-Remediation.ps1 -DLPAuditOnly
+
+# Pular alerta de forwarding (pode gerar falsos positivos)
+./scripts/Remediation/M365-Remediation.ps1 -SkipForwardingAlert
+
+# Não bloquear Dropbox/Google Drive no OWA
+./scripts/Remediation/M365-Remediation.ps1 -SkipOWABlock
+
+# Modo simulação (não faz alterações)
+./scripts/Remediation/M365-Remediation.ps1 -WhatIf
+
+# Combinado
+./scripts/Remediation/M365-Remediation.ps1 -SkipConnection -DLPAuditOnly -SkipForwardingAlert
+```
+
+**Output v4.0 em tenant sem E5:**
+```
+═══════════════════════════════════════════════════════════════════
+  🔍  DETECTANDO CAPACIDADES DO TENANT
+═══════════════════════════════════════════════════════════════════
+  ✅ Tenant: ATSI Tecnologia
+  📋 Licença: Microsoft 365 Business Premium
+  📋 Pode remediar: AuditLog, Retention, AlertPolicies (básicos)
+
+═══════════════════════════════════════════════════════════════════
+  3️⃣  POLÍTICAS DLP
+═══════════════════════════════════════════════════════════════════
+  ⏭️  DLP não disponível neste tenant (licença não inclui)
 ```
 
 **⚠️ Importante:** Execute sempre a auditoria antes da remediação!
@@ -253,7 +385,7 @@ Aplica configurações de segurança recomendadas:
 
 ### 💻 Entra ID / Dispositivos / Conditional Access
 
-#### `Analyze-CA-Policies.ps1` ⭐ NOVO
+#### `Analyze-CA-Policies.ps1`
 Análise detalhada de todas as políticas de Conditional Access do tenant:
 
 - Lista todas as políticas com estado (Ativo/Desativado/Report-Only)
@@ -275,35 +407,6 @@ Análise detalhada de todas as políticas de Conditional Access do tenant:
 
 # Usando Tenant ID (GUID)
 ./scripts/EntraID/Analyze-CA-Policies.ps1 -TenantId "12345678-1234-1234-1234-123456789012"
-```
-
-**Saída de exemplo:**
-```
-=== Análise de Conditional Access Policies ===
-Tenant: contoso.onmicrosoft.com
-
-Total de políticas: 10
-
-[1] Require MFA for all users
-    ID: 4ee6bf9b-4365-44bf-9fbd-3ecfeb7a2e2a
-    Estado: ATIVO
-    AÇÃO: Exige MFA
-    Apps incluídos: TODOS OS APPS
-    Usuários: TODOS
-    Localizações excluídas: Rede Corporativa
-
-[2] Block legacy authentication
-    Estado: ATIVO
-    AÇÃO: BLOQUEIA acesso
-    Client Apps: Exchange ActiveSync (Legacy), Outros (Legacy)
-
-========================================
-NAMED LOCATIONS
-========================================
-• Rede Corporativa
-  Tipo: IP Ranges
-    - 10.0.0.0/8
-    - 192.168.0.0/16
 ```
 
 **Permissões necessárias:**
@@ -336,15 +439,6 @@ Versão para Azure Automation com Managed Identity:
 - Perfeito para ambientes VDI
 - Suporte a notificações por email
 
-```powershell
-# Configurar no Azure Automation:
-# 1. Criar Automation Account
-# 2. Habilitar System Managed Identity
-# 3. Atribuir permissão Device.ReadWrite.All no Graph
-# 4. Importar runbook
-# 5. Agendar execução semanal/mensal
-```
-
 ---
 
 ### 🔐 Hybrid Identity / Entra Connect
@@ -368,12 +462,6 @@ Rotação da chave Kerberos para Seamless SSO do Azure AD Connect:
 # Executar rotação sem confirmação (automação)
 ./scripts/HybridIdentity/Rotate-KerberosKey-SSO.ps1 -SkipConfirmation
 ```
-
-**Pré-requisitos:**
-- Executar no servidor Azure AD Connect
-- Conta Global Admin ou Hybrid Identity Admin no Entra ID
-- Conta Domain Admin no AD local
-- Módulo ActiveDirectory instalado
 
 **Recomendação Microsoft:** Rotacionar a cada 30 dias.
 
@@ -404,31 +492,48 @@ chmod +x ./scripts/DNS/check-dns.sh
 ### Primeira Execução em Novo Tenant
 
 ```powershell
-# 1. Analisar políticas de Conditional Access existentes
-./scripts/EntraID/Analyze-CA-Policies.ps1 -TenantId "contoso.onmicrosoft.com"
-
-# 2. Auditoria OneDrive/SharePoint (não requer módulos)
-./scripts/OneDrive/OneDrive-Complete-Audit.ps1 -TenantName "contoso"
-
-# 3. Executar auditoria do Exchange (módulos instalados automaticamente)
-./scripts/Exchange/Exchange-Audit.ps1
-
-# 4. Conectar ao Purview
+# 1. Conectar aos serviços
+Connect-ExchangeOnline
 Connect-IPPSSession
 
-# 5. Executar auditoria do Purview
-./scripts/Purview/Purview-Audit-PS7.ps1
+# 2. Verificar capacidades do tenant (opcional, v4.0 faz automaticamente)
+./scripts/Modules/Get-TenantCapabilities.ps1
 
-# 6. Revisar relatórios gerados
+# 3. Analisar políticas de Conditional Access
+./scripts/EntraID/Analyze-CA-Policies.ps1 -TenantId "contoso.onmicrosoft.com"
 
-# 7. Aplicar remediações do Exchange
-./scripts/Remediation/M365-Remediation.ps1
+# 4. Auditoria OneDrive/SharePoint
+./scripts/OneDrive/OneDrive-Complete-Audit.ps1 -TenantName "contoso"
 
-# 8. Aplicar remediações do OneDrive (manual)
+# 5. Auditoria Exchange
+./scripts/Exchange/Exchange-Audit.ps1
+
+# 6. Auditoria Purview (v4.0 - detecta licença automaticamente)
+./scripts/Purview/Purview-Audit-PS7.ps1 -SkipConnection
+
+# 7. Revisar relatórios gerados
+
+# 8. Aplicar remediações (v4.0 - adapta à licença)
+./scripts/Remediation/M365-Remediation.ps1 -SkipConnection
+
+# 9. Aplicar remediações do OneDrive (manual)
 # Seguir REMEDIATION-CHECKLIST.md no SharePoint Admin Center
 
-# 9. Desconectar
+# 10. Desconectar
 Disconnect-ExchangeOnline -Confirm:$false
+```
+
+### Tenant com Licença Limitada (E3/Business)
+
+```powershell
+# Os scripts v4.0 detectam automaticamente e pulam recursos não licenciados
+./scripts/Purview/Purview-Audit-PS7.ps1 -SkipConnection
+# Output: DLP, InsiderRisk → "N/A (não licenciado)"
+# Score calculado apenas com recursos disponíveis
+
+./scripts/Remediation/M365-Remediation.ps1 -SkipConnection
+# Output: "⏭️ DLP não disponível neste tenant (licença não inclui)"
+# Cria apenas recursos disponíveis (Retention, Alertas básicos)
 ```
 
 ### Troubleshooting Erro 53003 (BlockedByConditionalAccess)
@@ -443,61 +548,11 @@ Disconnect-ExchangeOnline -Confirm:$false
 #    - Políticas que bloqueiam legacy auth (Exchange ActiveSync)
 #    - Políticas que exigem dispositivo gerenciado
 
-# 3. Verificar o IP do usuário
-# (Invoke-RestMethod -Uri "http://ip-api.com/json/IP_DO_USUARIO").country
-
-# 4. Causas comuns do erro 53003:
+# 3. Causas comuns do erro 53003:
 #    - VPN roteando por país não permitido
 #    - Apple Mail usando Exchange ActiveSync (legacy auth)
 #    - Dispositivo não registrado no Intune
 #    - iCloud Private Relay ativo
-```
-
-### Auditoria Completa de OneDrive
-
-```powershell
-# 1. Executar auditoria
-./scripts/OneDrive/OneDrive-Complete-Audit.ps1 -TenantName "contoso"
-
-# 2. Revisar relatório HTML gerado
-
-# 3. Aplicar correções no SharePoint Admin Center
-# https://contoso-admin.sharepoint.com
-
-# 4. Seguir o checklist em REMEDIATION-CHECKLIST.md
-
-# 5. Re-executar auditoria para validar
-./scripts/OneDrive/OneDrive-Complete-Audit.ps1 -TenantName "contoso"
-```
-
-### Pós-Incidente de Segurança
-
-```powershell
-# 1. Verificar regras de inbox suspeitas
-./scripts/Exchange/Clean-InboxRules.ps1 -ReportOnly
-
-# 2. Revisar o relatório CSV gerado
-
-# 3. Remover regras maliciosas
-./scripts/Exchange/Clean-InboxRules.ps1
-
-# 4. Executar auditoria completa
-./scripts/Exchange/Exchange-Audit.ps1
-```
-
-### Manutenção Mensal Hybrid Identity
-
-```powershell
-# No servidor Azure AD Connect (como Admin)
-
-# 1. Verificar status atual
-./scripts/HybridIdentity/Rotate-KerberosKey-SSO.ps1 -CheckOnly
-
-# 2. Se > 30 dias, rotacionar
-./scripts/HybridIdentity/Rotate-KerberosKey-SSO.ps1
-
-# 3. Aguardar 10-15 min para propagação
-# 4. Testar SSO com usuário em máquina corporativa
 ```
 
 ---
@@ -515,10 +570,10 @@ Disconnect-ExchangeOnline -Confirm:$false
            │                    │                    │
            ▼                    ▼                    ▼
     Exchange-Audit      Revisar JSON/CSV     M365-Remediation
-    Purview-Audit       Priorizar issues     Clean-InboxRules
+    Purview-Audit v4.0  Priorizar issues     (adapta à licença)
     OneDrive-Audit      Documentar gaps      SPO Admin Center
     CA-Policies-Audit   Analyze-CA output    Remove-Devices
-    check-dns.sh                             
+    TenantCapabilities                       
            │                    │                    │
            └────────────────────┼────────────────────┘
                                ▼
@@ -526,30 +581,40 @@ Disconnect-ExchangeOnline -Confirm:$false
                     │    MONITORAR     │
                     │   (Mensal/Trim)  │
                     └──────────────────┘
-                               │
-                               ▼
-                    ┌──────────────────┐
-                    │  HYBRID IDENTITY │
-                    │ Kerberos Rotation│
-                    │   (Mensal)       │
-                    └──────────────────┘
 ```
 
 ---
 
 ## 📜 Licenças Microsoft Necessárias
 
-| Recurso | Licença Mínima |
-|---------|---------------|
-| Unified Audit Log | Microsoft 365 E3/E5, Business Premium |
-| DLP Policies | Microsoft 365 E3/E5, Compliance Add-on |
-| Safe Links/Attachments | Microsoft Defender for Office 365 |
-| Sensitivity Labels | Microsoft 365 E3/E5, AIP P1/P2 |
-| Alertas Customizados | Microsoft 365 E5, Compliance Add-on |
-| Seamless SSO | Azure AD Free (com AD Connect) |
-| OneDrive for Business | Microsoft 365 Business Basic+ |
-| SharePoint Admin | Microsoft 365 Business Basic+ |
-| **Conditional Access** | **Entra ID P1/P2 ou Microsoft 365 E3/E5** |
+### Compatibilidade dos Scripts v4.0
+
+| Recurso | E5 | E3 | Business Premium | Basic |
+|---------|:--:|:--:|:----------------:|:-----:|
+| Unified Audit Log | ✅ | ✅ | ✅ | ❌ |
+| Mailbox Audit | ✅ | ✅ | ✅ | ✅ |
+| DLP Policies | ✅ | ❌ | ❌ | ❌ |
+| Retention Policies | ✅ | ✅ | ✅ | ❌ |
+| Sensitivity Labels | ✅ | ✅ | ✅ | ❌ |
+| Alertas Avançados | ✅ | ❌ | ❌ | ❌ |
+| Alertas Básicos | ✅ | ✅ | ✅ | ✅ |
+| Insider Risk | ✅ | ❌ | ❌ | ❌ |
+| Communication Compliance | ✅ | ❌ | ❌ | ❌ |
+| eDiscovery Premium | ✅ | ❌ | ❌ | ❌ |
+| eDiscovery Standard | ✅ | ✅ | ❌ | ❌ |
+
+> **💡 Nota:** Os scripts v4.0 detectam automaticamente a licença e pulam recursos não disponíveis.
+
+### Permissões por Script
+
+| Script | Permissões Necessárias |
+|--------|-----------------------|
+| Purview-Audit-PS7.ps1 | Compliance Administrator |
+| M365-Remediation.ps1 | Exchange Admin + Compliance Admin |
+| Get-TenantCapabilities.ps1 | Compliance Reader ou superior |
+| Exchange-Audit.ps1 | Global Reader, Exchange Administrator |
+| OneDrive-Complete-Audit.ps1 | SharePoint Administrator |
+| Analyze-CA-Policies.ps1 | Policy.Read.All, Directory.Read.All |
 
 ---
 
@@ -566,6 +631,16 @@ Contribuições são bem-vindas! Por favor:
 ---
 
 ## 📝 Changelog
+
+### v4.0 - Janeiro 2026 ⭐ ATUAL
+- ✨ **Novo:** `Get-TenantCapabilities.ps1` - Detecta licenças e capacidades automaticamente
+- ✨ **Novo:** `M365-TenantCapabilities.psm1` - Módulo importável
+- 🔧 **Atualizado:** `Purview-Audit-PS7.ps1` v4.0 - Integração com detecção de capacidades
+- 🔧 **Atualizado:** `M365-Remediation.ps1` v4.0 - Adapta remediações à licença
+- 📊 Score calculado apenas com recursos licenciados
+- ⏭️ Pula automaticamente recursos não disponíveis
+- 🔔 Alertas adaptativos (básicos vs avançados)
+- 📋 Relatórios claros do que foi auditado/remediado vs pulado
 
 ### v2.3 - Janeiro 2026
 - ✨ **Novo:** `Analyze-CA-Policies.ps1` - Análise detalhada de Conditional Access
