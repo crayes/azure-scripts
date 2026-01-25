@@ -2,7 +2,7 @@
 .SYNOPSIS
     Script de Auditoria Completa do Microsoft Purview
 .DESCRIPTION
-    Versão 3.0 - Compatível com PowerShell 7 (Mac/Linux/Windows)
+    Versão 3.1 - Compatível com PowerShell 7 (Mac/Linux/Windows)
     
     Audita:
     - Políticas DLP (Data Loss Prevention)
@@ -20,7 +20,7 @@
 .AUTHOR
     M365 Security Toolkit - RFAA
 .VERSION
-    3.0 - Janeiro 2026 - Correção Unified Audit Log + Auditorias Expandidas
+    3.1 - Janeiro 2026 - Correcao de cores para terminais escuros
 .EXAMPLE
     ./Purview-Audit-PS7.ps1
     ./Purview-Audit-PS7.ps1 -OutputPath "./MeuRelatorio" -IncludeDetails
@@ -45,7 +45,7 @@ $OutputFolder = "${OutputPath}_${ReportDate}"
 # ============================================
 
 $Script:Config = @{
-    Version = "3.0"
+    Version = "3.1"
     MinDLPPolicies = 3
     MinRetentionPolicies = 2
     MinSensitivityLabels = 5
@@ -84,7 +84,7 @@ function Write-Banner {
 ║                                                                          ║
 ║   🛡️  AUDITORIA COMPLETA DE SEGURANÇA E COMPLIANCE                       ║
 ║                                                                          ║
-║   Versão 3.0 - Janeiro 2026                                              ║
+║   Versão 3.1 - Janeiro 2026                                              ║
 ║   PowerShell 7 Compatible (Windows/macOS/Linux)                          ║
 ║                                                                          ║
 ╚══════════════════════════════════════════════════════════════════════════╝
@@ -110,13 +110,14 @@ function Write-Status {
         [string]$Type = "Info"
     )
     
+    # Cores otimizadas para terminais com fundo escuro
     $Config = switch ($Type) {
         "Success" { @{ Color = "Green";   Prefix = "  ✅" } }
         "Warning" { @{ Color = "Yellow";  Prefix = "  ⚠️ " } }
         "Error"   { @{ Color = "Red";     Prefix = "  ❌" } }
         "Info"    { @{ Color = "White";   Prefix = "  📋" } }
         "Header"  { @{ Color = "Cyan";    Prefix = "  🔍" } }
-        "Detail"  { @{ Color = "DarkGray"; Prefix = "     •" } }
+        "Detail"  { @{ Color = "Gray";    Prefix = "     •" } }
         default   { @{ Color = "White";   Prefix = "  " } }
     }
     
@@ -1152,7 +1153,7 @@ function Show-Summary {
     
     Write-Host ""
     Write-Host "  📊 SCORES POR CATEGORIA" -ForegroundColor Cyan
-    Write-Host "  ─────────────────────────────────────────────" -ForegroundColor DarkGray
+    Write-Host "  ─────────────────────────────────────────────" -ForegroundColor Gray
     
     $Categories = @(
         @{ Key = "DLP"; Name = "Data Loss Prevention" },
@@ -1180,7 +1181,7 @@ function Show-Summary {
     
     $OverallScore = if ($ValidCategories -gt 0) { [math]::Round($TotalScore / $ValidCategories) } else { 0 }
     
-    Write-Host "  ─────────────────────────────────────────────" -ForegroundColor DarkGray
+    Write-Host "  ─────────────────────────────────────────────" -ForegroundColor Gray
     Write-Score -Category "SCORE GERAL".PadRight(28) -Score $OverallScore
     Write-Host ""
     
@@ -1207,7 +1208,7 @@ function Show-Summary {
     }
     
     Write-Host "  📋 RECOMENDAÇÕES" -ForegroundColor Cyan
-    Write-Host "  ─────────────────────────────────────────────" -ForegroundColor DarkGray
+    Write-Host "  ─────────────────────────────────────────────" -ForegroundColor Gray
     
     if ($CriticalCount -gt 0) {
         Write-Host "  🚨 Críticas: $CriticalCount" -ForegroundColor Red
@@ -1274,8 +1275,8 @@ function Start-PurviewAudit {
     Write-Host ""
     Write-Host "  ✅ Auditoria concluída!" -ForegroundColor Green
     Write-Host ""
-    Write-Host "  💡 Dica: Para desconectar:" -ForegroundColor DarkGray
-    Write-Host '     Disconnect-ExchangeOnline -Confirm:$false' -ForegroundColor DarkGray
+    Write-Host "  💡 Dica: Para desconectar:" -ForegroundColor Gray
+    Write-Host '     Disconnect-ExchangeOnline -Confirm:$false' -ForegroundColor Gray
     Write-Host ""
     
     return $Results
