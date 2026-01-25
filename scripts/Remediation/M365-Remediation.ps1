@@ -2,13 +2,13 @@
 .SYNOPSIS
     Remediação de Segurança Microsoft 365 / Purview
 .DESCRIPTION
-    Versão 3.3 - Alinhada com Purview-Audit-PS7.ps1 v3.0
+    Versão 3.4 - Alinhada com Purview-Audit-PS7.ps1 v3.1
     
     Aplica configurações de segurança recomendadas:
     - Verifica Unified Audit Log (método atualizado 2025+)
     - Configura Mailbox Audit
     - Cria políticas de Retenção
-    - Cria políticas DLP para dados brasileiros
+    - Cria políticas DLP para dados brasileiros (com opção audit-only)
     - Desabilita provedores externos no OWA (opcional)
     - Configura alertas de segurança (alerta de forwarding opcional)
     
@@ -16,13 +16,19 @@
 .AUTHOR
     M365 Security Toolkit - RFAA
 .VERSION
-    3.3 - Janeiro 2026 - Adiciona opcoes para cliente decidir
+    3.4 - Janeiro 2026 - Adiciona DLPAuditOnly e OnlyAlerts
 .PARAMETER SkipConnection
     Usa sessao existente do Exchange/IPPS
 .PARAMETER OnlyRetention
     Executa apenas criacao de politicas de retencao
 .PARAMETER OnlyDLP
     Executa apenas criacao de politicas DLP
+.PARAMETER OnlyAlerts
+    Executa apenas criacao de alertas de seguranca
+.PARAMETER DLPAuditOnly
+    Cria politicas DLP em modo AUDITORIA (TestWithNotifications)
+    Gera relatorios mas NAO bloqueia compartilhamento
+    Ideal para escritorios de advocacia que precisam enviar contratos com CPF/CNPJ
 .PARAMETER SkipForwardingAlert
     Nao cria alerta de monitoramento de forwarding (para tenants que dependem de forwarding)
 .PARAMETER SkipOWABlock
@@ -34,6 +40,8 @@
     ./M365-Remediation.ps1 -SkipConnection
     ./M365-Remediation.ps1 -SkipForwardingAlert -SkipOWABlock
     ./M365-Remediation.ps1 -OnlyRetention
+    ./M365-Remediation.ps1 -OnlyDLP -DLPAuditOnly
+    ./M365-Remediation.ps1 -OnlyAlerts
 #>
 
 [CmdletBinding()]
@@ -41,6 +49,8 @@ param(
     [switch]$SkipConnection,
     [switch]$OnlyRetention,
     [switch]$OnlyDLP,
+    [switch]$OnlyAlerts,
+    [switch]$DLPAuditOnly,
     [switch]$SkipForwardingAlert,
     [switch]$SkipOWABlock,
     [switch]$WhatIf
@@ -69,8 +79,8 @@ function Write-Banner {
 ║                                                                          ║
 ║   🔧 REMEDIAÇÃO DE SEGURANÇA M365 / PURVIEW                              ║
 ║                                                                          ║
-║   Versão 3.3 - Janeiro 2026                                              ║
-║   Alinhado com Purview-Audit-PS7.ps1 v3.0                                ║
+║   Versão 3.4 - Janeiro 2026                                              ║
+║   Alinhado com Purview-Audit-PS7.ps1 v3.1                                ║
 ║                                                                          ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 
@@ -89,7 +99,7 @@ function Write-Section {
 function Write-Status {
     param(
         [string]$Message,
-        [ValidateSet("Info", "Success", "Warning", "Error", "Action", "Skip")]
+        [ValidateSet("Info", "Success", "Warning", "Error", "Action", "Skip", "Detail")]
         [string]$Type = "Info"
     )
     
@@ -99,7 +109,8 @@ function Write-Status {
         "Error"   { @{ Color = "Red";     Prefix = "  ❌" } }
         "Info"    { @{ Color = "White";   Prefix = "  📋" } }
         "Action"  { @{ Color = "Cyan";    Prefix = "  🔧" } }
-        "Skip"    { @{ Color = "DarkGray"; Prefix = "  ⏭️ " } }
+        "Skip"    { @{ Color = "Gray";    Prefix = "  ⏭️ " } }
+        "Detail"  { @{ Color = "Gray";    Prefix = "     •" } }
         default   { @{ Color = "White";   Prefix = "  " } }
     }
     
@@ -435,6 +446,21 @@ function Remediate-RetentionPolicies {
 function Remediate-DLPPolicies {
     Write-Section "3️⃣" "POLÍTICAS DLP"
     
+    # Determinar modo baseado no parâmetro
+    if ($DLPAuditOnly) {
+        $DLPMode = "TestWithNotifications"
+        $ModeDescription = "AUDITORIA (so relatorio, sem bloqueio)"
+        $BlockAccess = $false
+        Write-Status "MODO: $ModeDescription" "Warning"
+        Write-Status "Ideal para escritorios que precisam compartilhar CPF/CNPJ" "Detail"
+    }
+    else {
+        $DLPMode = "Enable"
+        $ModeDescription = "ATIVO (com bloqueio)"
+        $BlockAccess = $true
+        Write-Status "MODO: $ModeDescription" "Info"
+    }
+    
     try {
         $ExistingDLP = Get-DlpCompliancePolicy -WarningAction SilentlyContinue -ErrorAction Stop
         $DLPCount = if ($ExistingDLP) { @($ExistingDLP).Count } else { 0 }
@@ -442,41 +468,51 @@ function Remediate-DLPPolicies {
         Write-Status "Politicas DLP existentes - $DLPCount" "Info"
         Save-Backup -Key "DLPPoliciesCount" -Value $DLPCount
         
-        if ($DLPCount -ge 3) {
-            Write-Status "Ja existem politicas DLP suficientes" "Success"
+        if ($ExistingDLP) {
             foreach ($Policy in $ExistingDLP) {
-                $Status = if ($Policy.Enabled) { "[ON]" } else { "[OFF]" }
-                Write-Status "  $Status $($Policy.Name)" "Info"
+                $Status = switch ($Policy.Mode) {
+                    "Enable" { "[ATIVO]" }
+                    "TestWithNotifications" { "[AUDIT]" }
+                    "TestWithoutNotifications" { "[SILENT]" }
+                    default { "[$($Policy.Mode)]" }
+                }
+                Write-Status "  $Status $($Policy.Name)" "Detail"
             }
-            return
         }
         
+        # ============================================
         # DLP para CPF Brasileiro
+        # ============================================
+        
         $CPFPolicyName = "DLP - Protecao CPF Brasileiro"
-        if (-not ($ExistingDLP | Where-Object { $_.Name -eq $CPFPolicyName })) {
+        $ExistingCPF = $ExistingDLP | Where-Object { $_.Name -eq $CPFPolicyName }
+        
+        if (-not $ExistingCPF) {
             Write-Status "Criando - $CPFPolicyName" "Action"
             
             if (-not $WhatIf) {
                 try {
                     New-DlpCompliancePolicy -Name $CPFPolicyName `
-                        -Comment "Protege CPFs em Exchange, SharePoint, OneDrive e Teams" `
+                        -Comment "Detecta CPFs em Exchange, SharePoint, OneDrive e Teams. Modo: $ModeDescription" `
                         -ExchangeLocation All `
                         -SharePointLocation All `
                         -OneDriveLocation All `
                         -TeamsLocation All `
-                        -Mode Enable `
+                        -Mode $DLPMode `
                         -ErrorAction Stop
                     
                     New-DlpComplianceRule -Name "Detectar CPF - Alta Confianca" `
                         -Policy $CPFPolicyName `
                         -ContentContainsSensitiveInformation @{Name="Brazil CPF Number"; minCount="1"; minConfidence="85"} `
-                        -BlockAccess $true `
+                        -BlockAccess $BlockAccess `
                         -NotifyUser "Owner" `
-                        -NotifyPolicyTipCustomText "Este documento contem CPF e esta protegido pela politica de seguranca." `
+                        -NotifyPolicyTipCustomText "Este documento contem CPF. Verifique se o compartilhamento e apropriado." `
+                        -GenerateIncidentReport "SiteAdmin" `
+                        -ReportSeverityLevel "Medium" `
                         -ErrorAction Stop
                     
-                    Write-Status "$CPFPolicyName - CRIADA" "Success"
-                    Add-Change -Category "DLP" -Action "Create Policy" -Details $CPFPolicyName
+                    Write-Status "$CPFPolicyName - CRIADA [$ModeDescription]" "Success"
+                    Add-Change -Category "DLP" -Action "Create Policy" -Details "$CPFPolicyName (Mode: $DLPMode)"
                 }
                 catch {
                     Write-Status "Erro - $($_.Exception.Message)" "Error"
@@ -486,21 +522,29 @@ function Remediate-DLPPolicies {
                 Write-Status "[WhatIf] Criaria - $CPFPolicyName" "Skip"
             }
         }
+        else {
+            Write-Status "$CPFPolicyName - Ja existe (Mode: $($ExistingCPF.Mode))" "Success"
+        }
         
+        # ============================================
         # DLP para CNPJ
+        # ============================================
+        
         $CNPJPolicyName = "DLP - Protecao CNPJ"
-        if (-not ($ExistingDLP | Where-Object { $_.Name -eq $CNPJPolicyName })) {
+        $ExistingCNPJ = $ExistingDLP | Where-Object { $_.Name -eq $CNPJPolicyName }
+        
+        if (-not $ExistingCNPJ) {
             Write-Status "Criando - $CNPJPolicyName" "Action"
             
             if (-not $WhatIf) {
                 try {
                     New-DlpCompliancePolicy -Name $CNPJPolicyName `
-                        -Comment "Protege CNPJs em todos os workloads" `
+                        -Comment "Detecta CNPJs em todos os workloads. Modo: $ModeDescription" `
                         -ExchangeLocation All `
                         -SharePointLocation All `
                         -OneDriveLocation All `
                         -TeamsLocation All `
-                        -Mode Enable `
+                        -Mode $DLPMode `
                         -ErrorAction Stop
                     
                     New-DlpComplianceRule -Name "Detectar CNPJ" `
@@ -509,10 +553,11 @@ function Remediate-DLPPolicies {
                         -BlockAccess $false `
                         -NotifyUser "Owner" `
                         -GenerateIncidentReport "SiteAdmin" `
+                        -ReportSeverityLevel "Low" `
                         -ErrorAction Stop
                     
-                    Write-Status "$CNPJPolicyName - CRIADA" "Success"
-                    Add-Change -Category "DLP" -Action "Create Policy" -Details $CNPJPolicyName
+                    Write-Status "$CNPJPolicyName - CRIADA [$ModeDescription]" "Success"
+                    Add-Change -Category "DLP" -Action "Create Policy" -Details "$CNPJPolicyName (Mode: $DLPMode)"
                 }
                 catch {
                     Write-Status "Erro - $($_.Exception.Message)" "Error"
@@ -522,32 +567,42 @@ function Remediate-DLPPolicies {
                 Write-Status "[WhatIf] Criaria - $CNPJPolicyName" "Skip"
             }
         }
+        else {
+            Write-Status "$CNPJPolicyName - Ja existe (Mode: $($ExistingCNPJ.Mode))" "Success"
+        }
         
+        # ============================================
         # DLP para Cartão de Crédito
+        # ============================================
+        
         $CCPolicyName = "DLP - Protecao Cartao de Credito"
-        if (-not ($ExistingDLP | Where-Object { $_.Name -eq $CCPolicyName })) {
+        $ExistingCC = $ExistingDLP | Where-Object { $_.Name -eq $CCPolicyName }
+        
+        if (-not $ExistingCC) {
             Write-Status "Criando - $CCPolicyName" "Action"
             
             if (-not $WhatIf) {
                 try {
                     New-DlpCompliancePolicy -Name $CCPolicyName `
-                        -Comment "Protege numeros de cartao de credito" `
+                        -Comment "Detecta numeros de cartao de credito. Modo: $ModeDescription" `
                         -ExchangeLocation All `
                         -SharePointLocation All `
                         -OneDriveLocation All `
                         -TeamsLocation All `
-                        -Mode Enable `
+                        -Mode $DLPMode `
                         -ErrorAction Stop
                     
                     New-DlpComplianceRule -Name "Detectar Cartao de Credito" `
                         -Policy $CCPolicyName `
                         -ContentContainsSensitiveInformation @{Name="Credit Card Number"; minCount="1"; minConfidence="85"} `
-                        -BlockAccess $true `
+                        -BlockAccess $BlockAccess `
                         -NotifyUser "Owner" `
+                        -GenerateIncidentReport "SiteAdmin" `
+                        -ReportSeverityLevel "High" `
                         -ErrorAction Stop
                     
-                    Write-Status "$CCPolicyName - CRIADA" "Success"
-                    Add-Change -Category "DLP" -Action "Create Policy" -Details $CCPolicyName
+                    Write-Status "$CCPolicyName - CRIADA [$ModeDescription]" "Success"
+                    Add-Change -Category "DLP" -Action "Create Policy" -Details "$CCPolicyName (Mode: $DLPMode)"
                 }
                 catch {
                     Write-Status "Erro - $($_.Exception.Message)" "Error"
@@ -557,6 +612,14 @@ function Remediate-DLPPolicies {
                 Write-Status "[WhatIf] Criaria - $CCPolicyName" "Skip"
             }
         }
+        else {
+            Write-Status "$CCPolicyName - Ja existe (Mode: $($ExistingCC.Mode))" "Success"
+        }
+        
+        # Informação sobre relatórios
+        Write-Host ""
+        Write-Status "Para ver relatorios DLP:" "Info"
+        Write-Host "    https://compliance.microsoft.com/datalossprevention" -ForegroundColor Gray
     }
     catch {
         Write-Status "Erro ao configurar DLP - $($_.Exception.Message)" "Error"
@@ -608,6 +671,9 @@ function Remediate-OWAExternal {
 function Remediate-AlertPolicies {
     Write-Section "5️⃣" "ALERTAS DE SEGURANÇA"
     
+    Write-Status "Alertas so enviam notificacao por email - NAO bloqueiam nada" "Info"
+    Write-Host ""
+    
     $AlertsToCreate = @(
         @{
             Name = "Custom - Nova Regra Inbox Suspeita"
@@ -640,6 +706,22 @@ function Remediate-AlertPolicies {
             Description = "Alerta quando role de admin e atribuida"
             Severity = "High"
             Skip = $false
+        },
+        @{
+            Name = "Custom - Malware Detectado"
+            Category = "ThreatManagement"
+            Operation = "MalwareDetected"
+            Description = "Alerta quando malware e detectado em email ou arquivo"
+            Severity = "High"
+            Skip = $false
+        },
+        @{
+            Name = "Custom - Massa de Arquivos Deletados"
+            Category = "ThreatManagement"
+            Operation = "FileDeletedFirstStageRecycleBin"
+            Description = "Alerta quando muitos arquivos sao deletados (possivel ransomware)"
+            Severity = "High"
+            Skip = $false
         }
     )
     
@@ -655,6 +737,7 @@ function Remediate-AlertPolicies {
             
             if (-not $Existing) {
                 Write-Status "Criando - $($Alert.Name)" "Action"
+                Write-Status "$($Alert.Description)" "Detail"
                 
                 if (-not $WhatIf) {
                     New-ProtectionAlert -Name $Alert.Name `
@@ -682,6 +765,10 @@ function Remediate-AlertPolicies {
             Write-Status "Erro ao criar $($Alert.Name) - $($_.Exception.Message)" "Warning"
         }
     }
+    
+    Write-Host ""
+    Write-Status "Para gerenciar alertas:" "Info"
+    Write-Host "    https://security.microsoft.com/alertpolicies" -ForegroundColor Gray
 }
 
 # ============================================
@@ -714,8 +801,15 @@ function Show-Summary {
     Write-Host "  Politicas Retencao:    $RetentionStatus" -ForegroundColor $(if ($RetentionCount -ge 3) { "Green" } else { "Yellow" })
     
     # DLP
-    $DLPCount = @(Get-DlpCompliancePolicy -WarningAction SilentlyContinue -ErrorAction SilentlyContinue).Count
-    $DLPStatus = if ($DLPCount -ge 3) { "$DLPCount politicas" } else { "$DLPCount politicas (precisa mais)" }
+    $DLPPolicies = Get-DlpCompliancePolicy -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+    $DLPCount = if ($DLPPolicies) { @($DLPPolicies).Count } else { 0 }
+    $AuditOnlyCount = @($DLPPolicies | Where-Object { $_.Mode -eq "TestWithNotifications" }).Count
+    if ($AuditOnlyCount -gt 0) {
+        $DLPStatus = "$DLPCount politicas ($AuditOnlyCount em auditoria)"
+    }
+    else {
+        $DLPStatus = "$DLPCount politicas"
+    }
     Write-Host "  Politicas DLP:         $DLPStatus" -ForegroundColor $(if ($DLPCount -ge 3) { "Green" } else { "Yellow" })
     
     # OWA External
@@ -726,10 +820,11 @@ function Show-Summary {
     Write-Host ""
     
     # Opções usadas
-    if ($SkipForwardingAlert -or $SkipOWABlock) {
-        Write-Host "  OPCOES UTILIZADAS:" -ForegroundColor DarkGray
-        if ($SkipForwardingAlert) { Write-Host "     - Alerta de Forwarding: DESATIVADO" -ForegroundColor DarkGray }
-        if ($SkipOWABlock) { Write-Host "     - Bloqueio OWA: DESATIVADO" -ForegroundColor DarkGray }
+    if ($SkipForwardingAlert -or $SkipOWABlock -or $DLPAuditOnly) {
+        Write-Host "  OPCOES UTILIZADAS:" -ForegroundColor Gray
+        if ($DLPAuditOnly) { Write-Host "     - DLP em modo AUDITORIA (sem bloqueio)" -ForegroundColor Gray }
+        if ($SkipForwardingAlert) { Write-Host "     - Alerta de Forwarding: DESATIVADO" -ForegroundColor Gray }
+        if ($SkipOWABlock) { Write-Host "     - Bloqueio OWA: DESATIVADO" -ForegroundColor Gray }
         Write-Host ""
     }
     
@@ -742,7 +837,7 @@ function Show-Summary {
         Write-Host ""
     }
     
-    Write-Host "  Backup salvo em: $BackupPath" -ForegroundColor DarkGray
+    Write-Host "  Backup salvo em: $BackupPath" -ForegroundColor Gray
     Write-Host ""
 }
 
@@ -752,16 +847,16 @@ function Show-RollbackInstructions {
     Write-Host ""
     Write-Host "  Para reverter alteracoes:" -ForegroundColor Yellow
     Write-Host ""
-    Write-Host "  # Politicas de Retencao" -ForegroundColor DarkGray
+    Write-Host "  # Politicas de Retencao" -ForegroundColor Gray
     Write-Host '  Get-RetentionCompliancePolicy | Where-Object {$_.Name -like "Retencao*"} | Remove-RetentionCompliancePolicy' -ForegroundColor White
     Write-Host ""
-    Write-Host "  # Politicas DLP" -ForegroundColor DarkGray
+    Write-Host "  # Politicas DLP" -ForegroundColor Gray
     Write-Host '  Get-DlpCompliancePolicy | Where-Object {$_.Name -like "DLP -*"} | Remove-DlpCompliancePolicy' -ForegroundColor White
     Write-Host ""
-    Write-Host "  # OWA External Services (reativar)" -ForegroundColor DarkGray
+    Write-Host "  # OWA External Services (reativar)" -ForegroundColor Gray
     Write-Host '  Set-OwaMailboxPolicy -Identity "OwaMailboxPolicy-Default" -WacExternalServicesEnabled $true' -ForegroundColor White
     Write-Host ""
-    Write-Host "  # Alertas Customizados" -ForegroundColor DarkGray
+    Write-Host "  # Alertas Customizados" -ForegroundColor Gray
     Write-Host '  Get-ProtectionAlert | Where-Object {$_.Name -like "Custom*"} | Remove-ProtectionAlert' -ForegroundColor White
     Write-Host ""
 }
@@ -780,8 +875,13 @@ function Start-Remediation {
     }
     
     # Mostrar opções
-    if ($SkipForwardingAlert -or $SkipOWABlock) {
+    $HasOptions = $SkipForwardingAlert -or $SkipOWABlock -or $DLPAuditOnly -or $OnlyAlerts -or $OnlyDLP -or $OnlyRetention
+    if ($HasOptions) {
         Write-Host "  OPCOES SELECIONADAS:" -ForegroundColor Cyan
+        if ($OnlyAlerts) { Write-Host "     - Executar SOMENTE alertas" -ForegroundColor Yellow }
+        if ($OnlyDLP) { Write-Host "     - Executar SOMENTE DLP" -ForegroundColor Yellow }
+        if ($OnlyRetention) { Write-Host "     - Executar SOMENTE retencao" -ForegroundColor Yellow }
+        if ($DLPAuditOnly) { Write-Host "     - DLP em modo AUDITORIA (gera relatorio, nao bloqueia)" -ForegroundColor Yellow }
         if ($SkipForwardingAlert) { Write-Host "     - Alerta de Forwarding sera PULADO" -ForegroundColor Yellow }
         if ($SkipOWABlock) { Write-Host "     - Bloqueio de Dropbox/Google no OWA sera PULADO" -ForegroundColor Yellow }
         Write-Host ""
@@ -801,6 +901,9 @@ function Start-Remediation {
     }
     elseif ($OnlyDLP) {
         Remediate-DLPPolicies
+    }
+    elseif ($OnlyAlerts) {
+        Remediate-AlertPolicies
     }
     else {
         Remediate-UnifiedAuditLog
