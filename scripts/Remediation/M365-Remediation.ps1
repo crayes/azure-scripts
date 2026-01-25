@@ -2,7 +2,7 @@
 .SYNOPSIS
     Remediação de Segurança Microsoft 365 / Purview
 .DESCRIPTION
-    Versão 3.4 - Alinhada com Purview-Audit-PS7.ps1 v3.1
+    Versão 3.5 - Alinhada com Purview-Audit-PS7.ps1 v3.1
     
     Aplica configurações de segurança recomendadas:
     - Verifica Unified Audit Log (método atualizado 2025+)
@@ -16,7 +16,7 @@
 .AUTHOR
     M365 Security Toolkit - RFAA
 .VERSION
-    3.4 - Janeiro 2026 - Adiciona DLPAuditOnly e OnlyAlerts
+    3.5 - Janeiro 2026 - Fix DLP confidencelevel parameter (deprecated minConfidence)
 .PARAMETER SkipConnection
     Usa sessao existente do Exchange/IPPS
 .PARAMETER OnlyRetention
@@ -79,7 +79,7 @@ function Write-Banner {
 ║                                                                          ║
 ║   🔧 REMEDIAÇÃO DE SEGURANÇA M365 / PURVIEW                              ║
 ║                                                                          ║
-║   Versão 3.4 - Janeiro 2026                                              ║
+║   Versão 3.5 - Janeiro 2026                                              ║
 ║   Alinhado com Purview-Audit-PS7.ps1 v3.1                                ║
 ║                                                                          ║
 ╚══════════════════════════════════════════════════════════════════════════╝
@@ -482,6 +482,7 @@ function Remediate-DLPPolicies {
         
         # ============================================
         # DLP para CPF Brasileiro
+        # Usando confidencelevel em vez de minConfidence (deprecated)
         # ============================================
         
         $CPFPolicyName = "DLP - Protecao CPF Brasileiro"
@@ -501,9 +502,10 @@ function Remediate-DLPPolicies {
                         -Mode $DLPMode `
                         -ErrorAction Stop
                     
+                    # Usando confidencelevel (High/Medium/Low) em vez de minConfidence (deprecated)
                     New-DlpComplianceRule -Name "Detectar CPF - Alta Confianca" `
                         -Policy $CPFPolicyName `
-                        -ContentContainsSensitiveInformation @{Name="Brazil CPF Number"; minCount="1"; minConfidence="85"} `
+                        -ContentContainsSensitiveInformation @{Name="Brazil CPF Number"; minCount="1"; confidencelevel="High"} `
                         -BlockAccess $BlockAccess `
                         -NotifyUser "Owner" `
                         -NotifyPolicyTipCustomText "Este documento contem CPF. Verifique se o compartilhamento e apropriado." `
@@ -547,9 +549,10 @@ function Remediate-DLPPolicies {
                         -Mode $DLPMode `
                         -ErrorAction Stop
                     
+                    # Usando confidencelevel (High/Medium/Low) em vez de minConfidence (deprecated)
                     New-DlpComplianceRule -Name "Detectar CNPJ" `
                         -Policy $CNPJPolicyName `
-                        -ContentContainsSensitiveInformation @{Name="Brazil Legal Entity Number (CNPJ)"; minCount="1"; minConfidence="85"} `
+                        -ContentContainsSensitiveInformation @{Name="Brazil Legal Entity Number (CNPJ)"; minCount="1"; confidencelevel="High"} `
                         -BlockAccess $false `
                         -NotifyUser "Owner" `
                         -GenerateIncidentReport "SiteAdmin" `
@@ -592,9 +595,10 @@ function Remediate-DLPPolicies {
                         -Mode $DLPMode `
                         -ErrorAction Stop
                     
+                    # Usando confidencelevel (High/Medium/Low) em vez de minConfidence (deprecated)
                     New-DlpComplianceRule -Name "Detectar Cartao de Credito" `
                         -Policy $CCPolicyName `
-                        -ContentContainsSensitiveInformation @{Name="Credit Card Number"; minCount="1"; minConfidence="85"} `
+                        -ContentContainsSensitiveInformation @{Name="Credit Card Number"; minCount="1"; confidencelevel="High"} `
                         -BlockAccess $BlockAccess `
                         -NotifyUser "Owner" `
                         -GenerateIncidentReport "SiteAdmin" `
