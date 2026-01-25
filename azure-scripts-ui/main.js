@@ -1,19 +1,31 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
+const os = require('os');
 const fs = require('fs');
 
 let mainWindow;
 
-// Detectar o executável do PowerShell (pwsh para PowerShell Core, powershell para Windows PowerShell)
+// Detectar shell PowerShell disponível
 function getPowerShellExecutable() {
-  if (process.platform === 'win32') {
-    // Tentar pwsh primeiro (PowerShell Core), fallback para powershell (Windows PowerShell)
-    return 'pwsh';
+  // Preferir pwsh (PowerShell Core) se disponível
+  const pwshPaths = process.platform === 'win32'
+    ? ['pwsh.exe', 'powershell.exe']
+    : ['pwsh', '/usr/local/bin/pwsh', '/opt/homebrew/bin/pwsh'];
+  
+  for (const shell of pwshPaths) {
+    try {
+      const { execSync } = require('child_process');
+      execSync(`${shell} -Version`, { stdio: 'ignore' });
+      return shell;
+    } catch {
+      continue;
+    }
   }
-  // macOS e Linux usam pwsh
-  return 'pwsh';
+  return process.platform === 'win32' ? 'powershell.exe' : 'pwsh';
 }
+
+const POWERSHELL = getPowerShellExecutable();
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -22,10 +34,10 @@ function createWindow() {
     minWidth: 1000,
     minHeight: 700,
     webPreferences: {
-      nodeIntegration: false,        // ✅ Desabilitado para segurança
-      contextIsolation: true,        // ✅ Habilitado para segurança
-      preload: path.join(__dirname, 'preload.js'),  // ✅ Usar preload script
-      sandbox: false,                // Necessário para preload funcionar com Node APIs
+      nodeIntegration: false,        // ✅ Desabilitado por segurança
+      contextIsolation: true,        // ✅ Habilitado por segurança
+      preload: path.join(__dirname, 'preload.js'),  // ✅ Usando preload seguro
+      sandbox: false,                // Necessário para child_process no preload
     },
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     icon: path.join(__dirname, 'assets', 'icon.png'),
@@ -45,136 +57,146 @@ function createWindow() {
 
 // ==================== IPC Handlers ====================
 
-// Executar script PowerShell
-ipcMain.handle('execute-script', async (event, scriptPath, args = []) => {
-  return new Promise((resolve, reject) => {
-    const psExecutable = getPowerShellExecutable();
-    const fullScriptPath = path.resolve(__dirname, '..', scriptPath);
+// Obter lista de scripts disponíveis
+ipcMain.handle('get-scripts', async () => {
+  const scriptsPath = path.join(__dirname, '..', 'scripts');
+  const scripts = [];
+  
+  try {
+    const categories = fs.readdirSync(scriptsPath, { withFileTypes: true })
+      .filter(dirent => dirent.isDirectory() && !dirent.name.startsWith('.'));
     
-    // Verificar se o script existe
-    if (!fs.existsSync(fullScriptPath)) {
-      reject(new Error(`Script não encontrado: ${fullScriptPath}`));
+    for (const category of categories) {
+      const categoryPath = path.join(scriptsPath, category.name);
+      const files = fs.readdirSync(categoryPath)
+        .filter(file => file.endsWith('.ps1'));
+      
+      for (const file of files) {
+        scripts.push({
+          name: file,
+          category: category.name,
+          path: path.join(categoryPath, file),
+          relativePath: path.join('scripts', category.name, file),
+        });
+      }
+    }
+    
+    // Adicionar scripts na raiz
+    const rootScripts = fs.readdirSync(path.join(__dirname, '..'))
+      .filter(file => file.endsWith('.ps1'));
+    
+    for (const file of rootScripts) {
+      scripts.push({
+        name: file,
+        category: 'Root',
+        path: path.join(__dirname, '..', file),
+        relativePath: file,
+      });
+    }
+  } catch (error) {
+    console.error('Erro ao listar scripts:', error);
+  }
+  
+  return scripts;
+});
+
+// Executar script PowerShell
+ipcMain.handle('run-script', async (event, scriptPath, args = []) => {
+  return new Promise((resolve, reject) => {
+    const outputLines = [];
+    const errorLines = [];
+    
+    // Validar que o script existe e está dentro do diretório permitido
+    const allowedBasePath = path.join(__dirname, '..');
+    const resolvedPath = path.resolve(scriptPath);
+    
+    if (!resolvedPath.startsWith(allowedBasePath)) {
+      reject(new Error('Acesso negado: script fora do diretório permitido'));
+      return;
+    }
+    
+    if (!fs.existsSync(resolvedPath)) {
+      reject(new Error(`Script não encontrado: ${scriptPath}`));
       return;
     }
 
+    // Notificar início
+    mainWindow.webContents.send('script-output', {
+      type: 'info',
+      data: `Executando: ${path.basename(scriptPath)}\nUsando: ${POWERSHELL}\n${'─'.repeat(50)}\n`
+    });
+
     const psArgs = [
       '-NoProfile',
+      '-NonInteractive',
       '-ExecutionPolicy', 'Bypass',
-      '-File', fullScriptPath,
+      '-File', resolvedPath,
       ...args
     ];
 
-    console.log(`Executando: ${psExecutable} ${psArgs.join(' ')}`);
-
-    const child = spawn(psExecutable, psArgs, {
-      cwd: path.dirname(fullScriptPath),
-      env: { ...process.env, TERM: 'xterm-256color' }
+    const child = spawn(POWERSHELL, psArgs, {
+      cwd: path.dirname(resolvedPath),
+      env: { ...process.env, TERM: 'xterm-256color' },
     });
-
-    let stdout = '';
-    let stderr = '';
 
     child.stdout.on('data', (data) => {
       const text = data.toString();
-      stdout += text;
-      // Enviar output em tempo real para o renderer
-      mainWindow?.webContents.send('script-output', { type: 'stdout', data: text });
+      outputLines.push(text);
+      mainWindow.webContents.send('script-output', { type: 'stdout', data: text });
     });
 
     child.stderr.on('data', (data) => {
       const text = data.toString();
-      stderr += text;
-      mainWindow?.webContents.send('script-output', { type: 'stderr', data: text });
+      errorLines.push(text);
+      mainWindow.webContents.send('script-output', { type: 'stderr', data: text });
     });
 
     child.on('error', (error) => {
-      reject(new Error(`Falha ao executar PowerShell: ${error.message}. Verifique se pwsh está instalado.`));
-    });
-
-    child.on('close', (code) => {
-      if (code === 0) {
-        resolve({ success: true, stdout, stderr, code });
-      } else {
-        resolve({ success: false, stdout, stderr, code });
-      }
-    });
-  });
-});
-
-// Verificar se PowerShell está disponível
-ipcMain.handle('check-powershell', async () => {
-  return new Promise((resolve) => {
-    const psExecutable = getPowerShellExecutable();
-    const child = spawn(psExecutable, ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.ToString()']);
-    
-    let version = '';
-    
-    child.stdout.on('data', (data) => {
-      version += data.toString().trim();
-    });
-
-    child.on('error', () => {
-      resolve({ available: false, version: null, executable: psExecutable });
-    });
-
-    child.on('close', (code) => {
-      resolve({ 
-        available: code === 0, 
-        version: version || null,
-        executable: psExecutable 
+      mainWindow.webContents.send('script-output', { 
+        type: 'error', 
+        data: `Erro ao executar: ${error.message}` 
       });
+      reject(error);
+    });
+
+    child.on('close', (code) => {
+      const result = {
+        exitCode: code,
+        stdout: outputLines.join(''),
+        stderr: errorLines.join(''),
+        success: code === 0,
+      };
+      
+      mainWindow.webContents.send('script-output', { 
+        type: 'complete', 
+        data: `\n${'─'.repeat(50)}\nFinalizado com código: ${code}\n`,
+        exitCode: code
+      });
+      
+      resolve(result);
     });
   });
 });
 
-// Listar scripts disponíveis
-ipcMain.handle('list-scripts', async () => {
-  const scriptsDir = path.resolve(__dirname, '..', 'scripts');
-  const scripts = [];
-
-  const scanDirectory = (dir, category = '') => {
-    if (!fs.existsSync(dir)) return;
-    
-    const items = fs.readdirSync(dir, { withFileTypes: true });
-    
-    for (const item of items) {
-      if (item.isDirectory() && !item.name.startsWith('.')) {
-        scanDirectory(path.join(dir, item.name), item.name);
-      } else if (item.isFile() && item.name.endsWith('.ps1')) {
-        scripts.push({
-          name: item.name,
-          category: category || 'Root',
-          path: path.relative(path.join(__dirname, '..'), path.join(dir, item.name)),
-          fullPath: path.join(dir, item.name)
-        });
-      }
-    }
-  };
-
-  scanDirectory(scriptsDir);
-  
-  // Incluir scripts na raiz
-  const rootScript = path.resolve(__dirname, '..', 'OneDrive-Complete-Audit.ps1');
-  if (fs.existsSync(rootScript)) {
-    scripts.push({
-      name: 'OneDrive-Complete-Audit.ps1',
-      category: 'OneDrive',
-      path: 'OneDrive-Complete-Audit.ps1',
-      fullPath: rootScript
-    });
-  }
-
-  return scripts;
-});
-
-// Abrir diálogo para selecionar pasta de output
-ipcMain.handle('select-output-folder', async () => {
+// Selecionar arquivo
+ipcMain.handle('select-file', async (event, options = {}) => {
   const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openDirectory', 'createDirectory'],
-    title: 'Selecionar pasta para relatórios'
+    properties: ['openFile'],
+    filters: options.filters || [
+      { name: 'PowerShell Scripts', extensions: ['ps1'] },
+      { name: 'All Files', extensions: ['*'] }
+    ],
+    ...options
   });
-  
-  return result.canceled ? null : result.filePaths[0];
+  return result.filePaths[0] || null;
+});
+
+// Selecionar diretório
+ipcMain.handle('select-directory', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory', 'createDirectory']
+  });
+  return result.filePaths[0] || null;
 });
 
 // Obter informações do sistema
@@ -184,19 +206,54 @@ ipcMain.handle('get-system-info', async () => {
     arch: process.arch,
     nodeVersion: process.versions.node,
     electronVersion: process.versions.electron,
-    appVersion: app.getVersion(),
-    appPath: app.getAppPath()
+    powershell: POWERSHELL,
+    homeDir: os.homedir(),
+    hostname: os.hostname(),
   };
 });
 
-// Abrir arquivo/pasta no explorador
-ipcMain.handle('open-path', async (event, filePath) => {
-  const { shell } = require('electron');
-  if (fs.existsSync(filePath)) {
-    shell.showItemInFolder(filePath);
-    return true;
+// Verificar se PowerShell está disponível
+ipcMain.handle('check-powershell', async () => {
+  return new Promise((resolve) => {
+    const child = spawn(POWERSHELL, ['-Version']);
+    let version = '';
+    
+    child.stdout.on('data', (data) => {
+      version += data.toString();
+    });
+    
+    child.on('close', (code) => {
+      resolve({
+        available: code === 0,
+        executable: POWERSHELL,
+        version: version.trim(),
+      });
+    });
+    
+    child.on('error', () => {
+      resolve({
+        available: false,
+        executable: POWERSHELL,
+        version: null,
+      });
+    });
+  });
+});
+
+// Ler conteúdo de script
+ipcMain.handle('read-script', async (event, scriptPath) => {
+  try {
+    const allowedBasePath = path.join(__dirname, '..');
+    const resolvedPath = path.resolve(scriptPath);
+    
+    if (!resolvedPath.startsWith(allowedBasePath)) {
+      throw new Error('Acesso negado');
+    }
+    
+    return fs.readFileSync(resolvedPath, 'utf8');
+  } catch (error) {
+    throw new Error(`Erro ao ler script: ${error.message}`);
   }
-  return false;
 });
 
 // ==================== App Lifecycle ====================
@@ -217,7 +274,7 @@ app.on('window-all-closed', () => {
   }
 });
 
-// Prevenir navegação para URLs externas (segurança)
+// Segurança: prevenir navegação para URLs externas
 app.on('web-contents-created', (event, contents) => {
   contents.on('will-navigate', (event, navigationUrl) => {
     const parsedUrl = new URL(navigationUrl);
