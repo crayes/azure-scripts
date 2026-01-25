@@ -3,100 +3,119 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';">
     <title>Azure Scripts UI - Administração M365</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <div class="logo-section">
-                <svg width="60" height="60" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <rect width="60" height="60" rx="8" fill="#0078D4"/>
-                    <path d="M15 20 L30 15 L45 20 L30 45 Z" fill="#50E6FF"/>
-                    <path d="M30 15 L45 20 L45 35 L30 45 Z" fill="#0078D4" opacity="0.8"/>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="header-left">
+                <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="48" height="48" rx="8" fill="#0078D4"/>
+                    <path d="M12 16 L24 12 L36 16 L24 36 Z" fill="#50E6FF"/>
+                    <path d="M24 12 L36 16 L36 28 L24 36 Z" fill="#0078D4" opacity="0.8"/>
                 </svg>
-                <div>
+                <div class="header-title">
                     <h1>Azure Scripts UI</h1>
-                    <p class="subtitle">Administração Desktop para Scripts Microsoft 365</p>
+                    <span class="subtitle">Administração Microsoft 365</span>
+                </div>
+            </div>
+            <div class="header-right">
+                <div id="ps-status" class="status-badge" title="Status do PowerShell">
+                    <span class="status-checking">⏳ Verificando...</span>
                 </div>
             </div>
         </header>
 
-        <main>
-            <section class="welcome-section">
-                <h2>Bem-vindo ao Azure Scripts UI</h2>
-                <p class="description">
-                    Interface desktop multiplataforma para gerenciamento e execução de scripts de administração 
-                    Microsoft 365 e Azure. Esta aplicação fornece uma camada de UI amigável sobre o conjunto 
-                    de scripts PowerShell disponíveis no repositório <strong>crayes/azure-scripts</strong>.
-                </p>
-            </section>
+        <!-- Main Content -->
+        <main class="app-main">
+            <!-- Sidebar: Lista de Scripts -->
+            <aside class="sidebar">
+                <div class="sidebar-header">
+                    <h2>📜 Scripts Disponíveis</h2>
+                </div>
+                <div id="scripts-list" class="scripts-container">
+                    <p class="loading-state">Carregando scripts...</p>
+                </div>
+            </aside>
 
-            <section class="features-section">
-                <h3>Recursos Planejados</h3>
-                <div class="features-grid">
-                    <div class="feature-card">
-                        <div class="feature-icon">📊</div>
-                        <h4>Auditoria Exchange</h4>
-                        <p>Executar e visualizar auditorias completas do Exchange Online</p>
+            <!-- Content Area -->
+            <section class="content-area">
+                <!-- Script Controls -->
+                <div class="script-controls">
+                    <div class="selected-info">
+                        <span class="label">Selecionado:</span>
+                        <span id="selected-script" class="script-name">Nenhum script selecionado</span>
                     </div>
-                    <div class="feature-card">
-                        <div class="feature-icon">🛡️</div>
-                        <h4>Purview & Compliance</h4>
-                        <p>Gerenciar políticas DLP e configurações de compliance</p>
-                    </div>
-                    <div class="feature-card">
-                        <div class="feature-icon">☁️</div>
-                        <h4>OneDrive & SharePoint</h4>
-                        <p>Auditoria de segurança e configurações de compartilhamento</p>
-                    </div>
-                    <div class="feature-card">
-                        <div class="feature-icon">🔐</div>
-                        <h4>Conditional Access</h4>
-                        <p>Análise de políticas e troubleshooting</p>
-                    </div>
-                    <div class="feature-card">
-                        <div class="feature-icon">💻</div>
-                        <h4>Gestão de Dispositivos</h4>
-                        <p>Remover dispositivos inativos do Entra ID</p>
-                    </div>
-                    <div class="feature-card">
-                        <div class="feature-icon">🔄</div>
-                        <h4>Hybrid Identity</h4>
-                        <p>Rotação de chaves Kerberos para SSO</p>
+                    <div class="control-buttons">
+                        <button id="view-btn" class="btn btn-secondary" disabled title="Visualizar código">
+                            👁️ Visualizar
+                        </button>
+                        <button id="run-btn" class="btn btn-primary" disabled title="Executar script">
+                            ▶️ Executar
+                        </button>
+                        <button id="clear-btn" class="btn btn-ghost" title="Limpar output">
+                            🗑️ Limpar
+                        </button>
                     </div>
                 </div>
-            </section>
 
-            <section class="info-section">
-                <div class="info-box">
-                    <h3>🚀 Próximos Passos</h3>
-                    <ul>
-                        <li>Integração com scripts PowerShell existentes</li>
-                        <li>Interface para visualização de logs e relatórios</li>
-                        <li>Agendamento de tarefas de auditoria</li>
-                        <li>Dashboard com status de segurança dos tenants</li>
-                        <li>Gerenciamento de múltiplos tenants M365</li>
-                    </ul>
+                <!-- Output Console -->
+                <div class="output-panel">
+                    <div class="output-header">
+                        <h3>📟 Console de Saída</h3>
+                    </div>
+                    <pre id="output" class="output-content"><span class="output-info">Selecione um script e clique em "Executar"...</span></pre>
                 </div>
-                <div class="info-box">
-                    <h3>💡 Sobre o Projeto</h3>
-                    <p>
-                        Esta aplicação Electron serve como ponto de partida para criar uma interface 
-                        gráfica amigável que facilite a execução e monitoramento dos scripts de 
-                        administração Microsoft 365.
-                    </p>
-                    <p>
-                        <strong>Plataformas suportadas:</strong> Windows, macOS, Linux
-                    </p>
-                </div>
+
+                <!-- Features Grid (collapsible) -->
+                <details class="features-section" open>
+                    <summary><h3>🚀 Recursos Planejados</h3></summary>
+                    <div class="features-grid">
+                        <div class="feature-card">
+                            <div class="feature-icon">📊</div>
+                            <h4>Auditoria Exchange</h4>
+                            <p>Executar e visualizar auditorias completas do Exchange Online</p>
+                        </div>
+                        <div class="feature-card">
+                            <div class="feature-icon">🛡️</div>
+                            <h4>Purview & Compliance</h4>
+                            <p>Gerenciar políticas DLP e configurações de compliance</p>
+                        </div>
+                        <div class="feature-card">
+                            <div class="feature-icon">☁️</div>
+                            <h4>OneDrive & SharePoint</h4>
+                            <p>Auditoria de segurança e configurações de compartilhamento</p>
+                        </div>
+                        <div class="feature-card">
+                            <div class="feature-icon">🔐</div>
+                            <h4>Conditional Access</h4>
+                            <p>Análise de políticas e troubleshooting</p>
+                        </div>
+                        <div class="feature-card">
+                            <div class="feature-icon">💻</div>
+                            <h4>Gestão de Dispositivos</h4>
+                            <p>Remover dispositivos inativos do Entra ID</p>
+                        </div>
+                        <div class="feature-card">
+                            <div class="feature-icon">🔄</div>
+                            <h4>Hybrid Identity</h4>
+                            <p>Rotação de chaves Kerberos para SSO</p>
+                        </div>
+                    </div>
+                </details>
             </section>
         </main>
 
-        <footer>
-            <p>Azure Scripts UI v1.0.0 | M365 Security Toolkit</p>
-            <p class="version-info">Electron v<span id="electron-version"></span> | Node.js v<span id="node-version"></span></p>
+        <!-- Footer -->
+        <footer class="app-footer">
+            <span>Azure Scripts UI v1.0.0 | M365 Security Toolkit</span>
+            <span class="version-info">
+                Electron v<span id="electron-version">-</span> | 
+                Node.js v<span id="node-version">-</span>
+            </span>
         </footer>
     </div>
     
