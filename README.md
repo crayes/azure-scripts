@@ -120,6 +120,8 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/crayes/azure-scripts/m
 
 ### 🔍 Módulo de Detecção de Capacidades (v4.0)
 
+> 📖 **Documentação completa:** [scripts/Modules/README.md](scripts/Modules/README.md)
+
 #### `Get-TenantCapabilities.ps1` ⭐ NOVO
 Detecta automaticamente as capacidades e licenças disponíveis no tenant:
 
@@ -678,6 +680,8 @@ Este projeto está licenciado sob a MIT License - veja o arquivo [LICENSE](LICEN
 ---
 
 ## 👨‍💻 Autor
+
+**Celso N Rayes** // **Atsi Informatica**
 
 Desenvolvido para administração de múltiplos tenants Microsoft 365.
 
