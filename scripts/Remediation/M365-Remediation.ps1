@@ -2,24 +2,37 @@
 .SYNOPSIS
     Remediação de Segurança Microsoft 365 / Purview
 .DESCRIPTION
-    Versão 3.2 - Alinhada com Purview-Audit-PS7.ps1 v3.0
+    Versão 3.3 - Alinhada com Purview-Audit-PS7.ps1 v3.0
     
     Aplica configurações de segurança recomendadas:
     - Verifica Unified Audit Log (método atualizado 2025+)
     - Configura Mailbox Audit
     - Cria políticas de Retenção
     - Cria políticas DLP para dados brasileiros
-    - Desabilita provedores externos no OWA
-    - Configura alertas de segurança
+    - Desabilita provedores externos no OWA (opcional)
+    - Configura alertas de segurança (alerta de forwarding opcional)
     
     Cria backup antes de cada alteração para permitir rollback.
 .AUTHOR
     M365 Security Toolkit - RFAA
 .VERSION
-    3.2 - Janeiro 2026 - Fix Teams retention rule parameters
+    3.3 - Janeiro 2026 - Adiciona opcoes para cliente decidir
+.PARAMETER SkipConnection
+    Usa sessao existente do Exchange/IPPS
+.PARAMETER OnlyRetention
+    Executa apenas criacao de politicas de retencao
+.PARAMETER OnlyDLP
+    Executa apenas criacao de politicas DLP
+.PARAMETER SkipForwardingAlert
+    Nao cria alerta de monitoramento de forwarding (para tenants que dependem de forwarding)
+.PARAMETER SkipOWABlock
+    Nao bloqueia Dropbox/Google Drive no OWA
+.PARAMETER WhatIf
+    Modo simulacao - nao faz alteracoes
 .EXAMPLE
     ./M365-Remediation.ps1
     ./M365-Remediation.ps1 -SkipConnection
+    ./M365-Remediation.ps1 -SkipForwardingAlert -SkipOWABlock
     ./M365-Remediation.ps1 -OnlyRetention
 #>
 
@@ -28,6 +41,8 @@ param(
     [switch]$SkipConnection,
     [switch]$OnlyRetention,
     [switch]$OnlyDLP,
+    [switch]$SkipForwardingAlert,
+    [switch]$SkipOWABlock,
     [switch]$WhatIf
 )
 
@@ -54,7 +69,7 @@ function Write-Banner {
 ║                                                                          ║
 ║   🔧 REMEDIAÇÃO DE SEGURANÇA M365 / PURVIEW                              ║
 ║                                                                          ║
-║   Versão 3.2 - Janeiro 2026                                              ║
+║   Versão 3.3 - Janeiro 2026                                              ║
 ║   Alinhado com Purview-Audit-PS7.ps1 v3.0                                ║
 ║                                                                          ║
 ╚══════════════════════════════════════════════════════════════════════════╝
@@ -555,6 +570,11 @@ function Remediate-DLPPolicies {
 function Remediate-OWAExternal {
     Write-Section "4️⃣" "OWA - PROVEDORES EXTERNOS"
     
+    if ($SkipOWABlock) {
+        Write-Status "Bloqueio de Dropbox/Google Drive no OWA - PULADO (parametro -SkipOWABlock)" "Skip"
+        return
+    }
+    
     try {
         $OwaPolicy = Get-OwaMailboxPolicy -Identity "OwaMailboxPolicy-Default" -ErrorAction Stop
         Save-Backup -Key "WacExternalServicesEnabled" -Value $OwaPolicy.WacExternalServicesEnabled
@@ -595,6 +615,7 @@ function Remediate-AlertPolicies {
             Operation = "New-InboxRule"
             Description = "Alerta quando nova regra de inbox e criada (possivel comprometimento)"
             Severity = "High"
+            Skip = $false
         },
         @{
             Name = "Custom - Permissao Mailbox Delegada"
@@ -602,6 +623,7 @@ function Remediate-AlertPolicies {
             Operation = "Add-MailboxPermission"
             Description = "Alerta quando permissoes de mailbox sao alteradas"
             Severity = "Medium"
+            Skip = $false
         },
         @{
             Name = "Custom - Forwarding Externo Configurado"
@@ -609,6 +631,7 @@ function Remediate-AlertPolicies {
             Operation = "Set-Mailbox"
             Description = "Alerta quando forwarding e configurado"
             Severity = "High"
+            Skip = $SkipForwardingAlert
         },
         @{
             Name = "Custom - Admin Role Atribuida"
@@ -616,10 +639,17 @@ function Remediate-AlertPolicies {
             Operation = "Add-RoleGroupMember"
             Description = "Alerta quando role de admin e atribuida"
             Severity = "High"
+            Skip = $false
         }
     )
     
     foreach ($Alert in $AlertsToCreate) {
+        # Check if this alert should be skipped
+        if ($Alert.Skip) {
+            Write-Status "$($Alert.Name) - PULADO (parametro -SkipForwardingAlert)" "Skip"
+            continue
+        }
+        
         try {
             $Existing = Get-ProtectionAlert -Identity $Alert.Name -ErrorAction SilentlyContinue
             
@@ -691,9 +721,17 @@ function Show-Summary {
     # OWA External
     $OwaExternal = (Get-OwaMailboxPolicy -Identity "OwaMailboxPolicy-Default" -ErrorAction SilentlyContinue).WacExternalServicesEnabled
     $OwaStatus = if (-not $OwaExternal) { "BLOQUEADO" } else { "PERMITIDO" }
-    Write-Host "  OWA Externos:          $OwaStatus" -ForegroundColor $(if (-not $OwaExternal) { "Green" } else { "Red" })
+    Write-Host "  OWA Externos:          $OwaStatus" -ForegroundColor $(if (-not $OwaExternal) { "Green" } else { "Yellow" })
     
     Write-Host ""
+    
+    # Opções usadas
+    if ($SkipForwardingAlert -or $SkipOWABlock) {
+        Write-Host "  OPCOES UTILIZADAS:" -ForegroundColor DarkGray
+        if ($SkipForwardingAlert) { Write-Host "     - Alerta de Forwarding: DESATIVADO" -ForegroundColor DarkGray }
+        if ($SkipOWABlock) { Write-Host "     - Bloqueio OWA: DESATIVADO" -ForegroundColor DarkGray }
+        Write-Host ""
+    }
     
     # Mudanças realizadas
     if ($Script:Changes.Count -gt 0) {
@@ -720,7 +758,7 @@ function Show-RollbackInstructions {
     Write-Host "  # Politicas DLP" -ForegroundColor DarkGray
     Write-Host '  Get-DlpCompliancePolicy | Where-Object {$_.Name -like "DLP -*"} | Remove-DlpCompliancePolicy' -ForegroundColor White
     Write-Host ""
-    Write-Host "  # OWA External Services" -ForegroundColor DarkGray
+    Write-Host "  # OWA External Services (reativar)" -ForegroundColor DarkGray
     Write-Host '  Set-OwaMailboxPolicy -Identity "OwaMailboxPolicy-Default" -WacExternalServicesEnabled $true' -ForegroundColor White
     Write-Host ""
     Write-Host "  # Alertas Customizados" -ForegroundColor DarkGray
@@ -738,6 +776,14 @@ function Start-Remediation {
     
     if ($WhatIf) {
         Write-Host "  MODO SIMULACAO (WhatIf) - Nenhuma alteracao sera feita" -ForegroundColor Yellow
+        Write-Host ""
+    }
+    
+    # Mostrar opções
+    if ($SkipForwardingAlert -or $SkipOWABlock) {
+        Write-Host "  OPCOES SELECIONADAS:" -ForegroundColor Cyan
+        if ($SkipForwardingAlert) { Write-Host "     - Alerta de Forwarding sera PULADO" -ForegroundColor Yellow }
+        if ($SkipOWABlock) { Write-Host "     - Bloqueio de Dropbox/Google no OWA sera PULADO" -ForegroundColor Yellow }
         Write-Host ""
     }
     
