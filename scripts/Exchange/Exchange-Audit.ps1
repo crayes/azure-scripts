@@ -22,9 +22,27 @@
 
 #Requires -Version 5.1
 
+param(
+    [string]$OutputPath
+)
+
 $ErrorActionPreference = "Continue"
 $ReportDate = Get-Date -Format "yyyy-MM-dd_HH-mm"
-$OutputFile = ".\Exchange-Audit-Report_$ReportDate.html"
+
+if ($OutputPath) {
+    if ($OutputPath.ToLower().EndsWith('.html')) {
+        $OutputFile = $OutputPath
+    } else {
+        $OutputFile = Join-Path $OutputPath "Exchange-Audit-Report_$ReportDate.html"
+    }
+} else {
+    $OutputFile = Join-Path (Get-Location) "Exchange-Audit-Report_$ReportDate.html"
+}
+
+$OutputDir = Split-Path -Parent $OutputFile
+if ($OutputDir -and -not (Test-Path $OutputDir)) {
+    New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
+}
 
 # ============================================
 # FUNÇÕES AUXILIARES
@@ -583,6 +601,66 @@ Write-Host "══════════════════════�
 # ============================================
 # FINALIZAÇÃO (SEM DESCONEXÃO)
 # ============================================
+
+# ============================================
+# RELATÓRIO HTML
+# ============================================
+
+try {
+        $findingsRows = if ($Results.Findings.Count -gt 0) {
+                ($Results.Findings | ForEach-Object {
+                        "<tr><td>$($_.Category)</td><td>$($_.Issue)</td><td>$($_.Severity)</td></tr>"
+                }) -join "`n"
+        } else {
+                "<tr><td colspan='3'>Nenhum problema encontrado.</td></tr>"
+        }
+
+        $html = @"
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="utf-8" />
+    <title>Exchange Audit Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 24px; color: #1f2937; }
+        h1 { margin: 0 0 8px 0; }
+        .meta { color: #6b7280; margin-bottom: 16px; }
+        .cards { display: flex; gap: 12px; margin: 16px 0; }
+        .card { padding: 12px 16px; border: 1px solid #e5e7eb; border-radius: 8px; min-width: 160px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+        th, td { border: 1px solid #e5e7eb; padding: 8px; text-align: left; }
+        th { background: #f3f4f6; }
+    </style>
+</head>
+<body>
+    <h1>Auditoria de Segurança - Exchange Online</h1>
+    <div class="meta">Gerado em: $($Results.Timestamp)</div>
+
+    <div class="cards">
+        <div class="card">🔴 Alta severidade: $HighFindings</div>
+        <div class="card">🟡 Média severidade: $MediumFindings</div>
+        <div class="card">🔵 Baixa severidade: $LowFindings</div>
+    </div>
+
+    <h2>Achados</h2>
+    <table>
+        <thead>
+            <tr><th>Categoria</th><th>Problema</th><th>Severidade</th></tr>
+        </thead>
+        <tbody>
+            $findingsRows
+        </tbody>
+    </table>
+</body>
+</html>
+"@
+
+        $html | Set-Content -Path $OutputFile -Encoding UTF8
+        Write-Host "📄 Relatório HTML salvo em: $OutputFile" -ForegroundColor Green
+}
+catch {
+        Write-Host "⚠️ Falha ao gerar relatório HTML: $($_.Exception.Message)" -ForegroundColor Yellow
+}
 
 Write-Host ""
 Write-Host "✅ Auditoria concluída!" -ForegroundColor Green
