@@ -650,6 +650,7 @@ function renderProfiles(script, meta) {
         <option value="">Selecione...</option>
         ${options}
       </select>
+      <input id="profile-name" class="param-input" type="text" placeholder="Nome do perfil">
       <button class="btn btn-secondary btn-small" id="profile-apply">Aplicar</button>
       <button class="btn btn-secondary btn-small" id="profile-save">Salvar</button>
       <button class="btn btn-ghost btn-small" id="profile-delete">Excluir</button>
@@ -664,9 +665,13 @@ function renderProfiles(script, meta) {
     renderScriptDetails(script);
   });
 
-  profileContainer.querySelector('#profile-save')?.addEventListener('click', async () => {
-    const name = window.prompt('Nome do perfil');
-    if (!name) return;
+  const saveProfile = async () => {
+    const nameInput = profileContainer.querySelector('#profile-name');
+    const name = (nameInput?.value || '').trim();
+    if (!name) {
+      showNotification('Informe o nome do perfil.', 'warning');
+      return;
+    }
     if (!state.paramValues[rel]) state.paramValues[rel] = {};
     const updated = { ...state.profiles };
     updated.profiles = updated.profiles || {};
@@ -675,6 +680,14 @@ function renderProfiles(script, meta) {
     state.profiles = await window.electronAPI.saveProfiles(updated);
     renderProfiles(script, meta);
     showNotification('Perfil salvo.', 'success');
+  };
+
+  profileContainer.querySelector('#profile-save')?.addEventListener('click', saveProfile);
+  profileContainer.querySelector('#profile-name')?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      saveProfile();
+    }
   });
 
   profileContainer.querySelector('#profile-delete')?.addEventListener('click', async () => {
