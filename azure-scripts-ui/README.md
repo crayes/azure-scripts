@@ -9,6 +9,13 @@ Interface desktop multiplataforma para gerenciamento e execução de scripts de 
 - **Lista de Scripts**: Visualize todos os scripts PowerShell organizados por categoria
 - **Execução Integrada**: Execute scripts diretamente da UI com output em tempo real
 - **Visualização de Código**: Veja o código fonte dos scripts antes de executar
+- **Parâmetros Dinâmicos**: Detecta parâmetros automaticamente e permite preencher na UI
+- **Perfis de Execução**: Salve e reaplique parâmetros por script
+- **Fluxos Guiados**: Execute sequências de scripts com variáveis
+- **Multi‑Tenant**: Execute fluxos para vários tenants (lista)
+- **Fila de Execução**: Rode vários scripts em sequência com um clique
+- **Histórico & Logs**: Histórico persistente com logs por execução
+- **Organização de Relatórios**: Pasta por tenant/data automaticamente
 - **Multiplataforma**: Windows, macOS e Linux
 - **Seguro**: Implementa contextIsolation e preload script (best practices do Electron)
 
@@ -82,9 +89,14 @@ O projeto segue as melhores práticas de segurança do Electron:
 ## 🎮 Uso
 
 1. **Selecionar Script**: Clique em um script na sidebar esquerda
-2. **Visualizar**: Clique em "👁️ Visualizar" para ver o código
-3. **Executar**: Clique em "▶️ Executar" para rodar o script
-4. **Output**: Acompanhe a saída em tempo real no console
+2. **Parâmetros**: Preencha os parâmetros na seção "⚙️ Parâmetros"
+3. **Perfis**: Salve ou aplique perfis de execução
+4. **Visualizar**: Clique em "👁️ Visualizar" para ver o código
+5. **Executar**: Clique em "▶️ Executar" ou adicione à fila
+6. **Fluxos**: Use "🧭 Fluxos Guiados" para executar sequências
+7. **Output**: Acompanhe a saída em tempo real no console
+8. **Histórico**: Veja execuções anteriores e logs
+9. **Configurações**: Defina pasta base de relatórios
 
 ## 📋 API Disponível (preload.js)
 
@@ -102,6 +114,17 @@ const psInfo = await window.electronAPI.checkPowerShell();
 const cleanup = window.electronAPI.onScriptOutput((data) => {
   console.log(data.type, data.data);
 });
+
+// Obter metadados de scripts
+const meta = await window.electronAPI.getScriptMetadata(scriptPath);
+
+// Histórico e configurações
+const history = await window.electronAPI.getHistory();
+const settings = await window.electronAPI.getSettings();
+await window.electronAPI.saveSettings({ organizeReports: true });
+
+// Cancelar execução atual
+await window.electronAPI.cancelCurrent();
 
 // Informações do sistema
 const sysInfo = await window.electronAPI.getSystemInfo();

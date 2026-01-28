@@ -154,6 +154,19 @@ body {
   color: white;
 }
 
+.script-status {
+  margin-left: 0.4rem;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #bbb;
+  flex-shrink: 0;
+}
+
+.script-status.status-success { background: var(--success); }
+.script-status.status-fail { background: var(--error); }
+.script-status.status-none { background: #bbb; }
+
 .script-icon {
   font-size: 1rem;
   flex-shrink: 0;
@@ -163,6 +176,22 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.script-type {
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+}
+
+.script-item.selected .script-type {
+  color: white;
+  background: rgba(255,255,255,0.2);
+  border-color: rgba(255,255,255,0.4);
 }
 
 .loading-state, .empty-state, .error-state {
@@ -192,6 +221,97 @@ body {
   background: var(--bg-secondary);
   border-radius: 8px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+/* ==================== Script Details & Parameters ==================== */
+.script-details {
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.requirements-container ul {
+  margin: 0.4rem 0 0.6rem 1.2rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.profile-controls {
+  margin-bottom: 0.6rem;
+}
+
+.profile-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.details-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.details-header h3 {
+  font-size: 1rem;
+}
+
+.script-desc {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  text-align: right;
+}
+
+.params-container {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.param-row {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.param-label {
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.param-input-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.param-input {
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: white;
+  font-size: 0.85rem;
+}
+
+.param-textarea {
+  min-height: 90px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.param-help {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.btn-small {
+  padding: 0.35rem 0.5rem;
+  font-size: 0.8rem;
 }
 
 .selected-info {
@@ -260,6 +380,135 @@ body {
 
 .btn-ghost:hover:not(:disabled) {
   background: var(--bg-primary);
+}
+
+/* ==================== Queue / History / Settings ==================== */
+.queue-section,
+.history-section,
+.settings-section {
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.queue-header,
+.history-header,
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.6rem;
+}
+
+.queue-list,
+.history-list {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.queue-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4rem 0.6rem;
+  background: var(--bg-primary);
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.history-item {
+  padding: 0.5rem 0.6rem;
+  background: var(--bg-primary);
+  border-radius: 6px;
+  border-left: 3px solid var(--info);
+  font-size: 0.85rem;
+}
+
+.history-item.history-success { border-left-color: var(--success); }
+.history-item.history-fail { border-left-color: var(--error); }
+
+.history-main {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.history-sub {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.settings-grid {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.settings-item {
+  display: grid;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+}
+
+/* ==================== Workflows ==================== */
+.workflow-section {
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.workflow-header h3 {
+  font-size: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.workflow-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.workflow-card {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 0.75rem;
+  background: var(--bg-primary);
+  display: grid;
+  gap: 0.6rem;
+}
+
+.workflow-title h4 {
+  color: var(--azure-blue);
+  margin-bottom: 0.2rem;
+}
+
+.workflow-title p {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.workflow-inputs {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.workflow-input label {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.workflow-steps ol {
+  margin: 0.4rem 0 0 1.2rem;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+}
+
+.workflow-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 /* ==================== Output Panel ==================== */

@@ -1,0 +1,283 @@
+{
+  "scripts": {
+    "scripts/Exchange/Exchange-Audit.ps1": {
+      "displayName": "Exchange Audit",
+      "description": "Auditoria de segurança do Exchange Online.",
+      "requires": {
+        "permissions": ["Global Reader", "Exchange Administrator"]
+      }
+    },
+    "scripts/Exchange/Clean-InboxRules.ps1": {
+      "displayName": "Clean Inbox Rules",
+      "description": "Identifica e remove regras de inbox problemáticas.",
+      "requires": {
+        "permissions": ["Exchange Administrator"]
+      },
+      "args": [
+        {
+          "key": "ReportOnly",
+          "label": "Apenas relatório",
+          "type": "switch",
+          "flag": "-ReportOnly"
+        },
+        {
+          "key": "RemoveAll",
+          "label": "Remover todas automaticamente",
+          "type": "switch",
+          "flag": "-RemoveAll"
+        }
+      ]
+    },
+    "scripts/Purview/Purview-Audit-PS7.ps1": {
+      "displayName": "Purview Audit",
+      "description": "Auditoria de compliance e DLP no Microsoft Purview.",
+      "requires": {
+        "permissions": ["Compliance Administrator"]
+      },
+      "args": [
+        {
+          "key": "SkipConnection",
+          "label": "Pular conexão",
+          "type": "switch",
+          "flag": "-SkipConnection"
+        },
+        {
+          "key": "IncludeDetails",
+          "label": "Incluir detalhes",
+          "type": "switch",
+          "flag": "-IncludeDetails"
+        },
+        {
+          "key": "SkipCapabilityCheck",
+          "label": "Pular detecção de capacidades",
+          "type": "switch",
+          "flag": "-SkipCapabilityCheck"
+        },
+        {
+          "key": "GenerateHTML",
+          "label": "Gerar relatório HTML",
+          "type": "switch",
+          "flag": "-GenerateHTML"
+        },
+        {
+          "key": "OutputPath",
+          "label": "Pasta de saída",
+          "type": "path",
+          "pathKind": "directory",
+          "flag": "-OutputPath",
+          "placeholder": "./Relatorios"
+        }
+      ]
+    },
+    "scripts/Remediation/M365-Remediation.ps1": {
+      "displayName": "M365 Remediation",
+      "description": "Aplica configurações recomendadas de segurança.",
+      "requires": {
+        "permissions": ["Exchange Administrator", "Compliance Administrator"]
+      },
+      "args": [
+        {
+          "key": "SkipConnection",
+          "label": "Pular conexão",
+          "type": "switch",
+          "flag": "-SkipConnection"
+        },
+        {
+          "key": "SkipCapabilityCheck",
+          "label": "Pular detecção de capacidades",
+          "type": "switch",
+          "flag": "-SkipCapabilityCheck"
+        },
+        {
+          "key": "OnlyRetention",
+          "label": "Somente retenção",
+          "type": "switch",
+          "flag": "-OnlyRetention"
+        },
+        {
+          "key": "OnlyDLP",
+          "label": "Somente DLP",
+          "type": "switch",
+          "flag": "-OnlyDLP"
+        },
+        {
+          "key": "OnlyAlerts",
+          "label": "Somente alertas",
+          "type": "switch",
+          "flag": "-OnlyAlerts"
+        },
+        {
+          "key": "DLPAuditOnly",
+          "label": "DLP em modo auditoria",
+          "type": "switch",
+          "flag": "-DLPAuditOnly"
+        },
+        {
+          "key": "SkipForwardingAlert",
+          "label": "Pular alerta de forwarding",
+          "type": "switch",
+          "flag": "-SkipForwardingAlert"
+        },
+        {
+          "key": "SkipOWABlock",
+          "label": "Não bloquear OWA externo",
+          "type": "switch",
+          "flag": "-SkipOWABlock"
+        },
+        {
+          "key": "WhatIf",
+          "label": "Simulação (WhatIf)",
+          "type": "switch",
+          "flag": "-WhatIf"
+        }
+      ]
+    },
+    "scripts/EntraID/Analyze-CA-Policies.ps1": {
+      "displayName": "Analyze CA Policies",
+      "description": "Análise de políticas de Conditional Access.",
+      "requires": {
+        "permissions": ["Policy.Read.All", "Directory.Read.All"]
+      }
+    },
+    "scripts/OneDrive/OneDrive-Complete-Audit.ps1": {
+      "displayName": "OneDrive Audit",
+      "description": "Auditoria completa de OneDrive e SharePoint.",
+      "requires": {
+        "permissions": ["SharePoint Administrator", "Global Administrator"]
+      },
+      "args": [
+        {
+          "key": "TenantName",
+          "label": "Tenant Name",
+          "type": "string",
+          "flag": "-TenantName",
+          "placeholder": "contoso",
+          "required": true
+        },
+        {
+          "key": "OutputPath",
+          "label": "Pasta de saída",
+          "type": "path",
+          "pathKind": "directory",
+          "flag": "-OutputPath",
+          "placeholder": "./Relatorios"
+        },
+        {
+          "key": "ExportJson",
+          "label": "Exportar JSON",
+          "type": "switch",
+          "flag": "-ExportJson"
+        },
+        {
+          "key": "SkipSharingAnalysis",
+          "label": "Pular análise de compartilhamento",
+          "type": "switch",
+          "flag": "-SkipSharingAnalysis"
+        }
+      ]
+    },
+    "OneDrive-Complete-Audit.ps1": {
+      "displayName": "OneDrive Audit (Root)",
+      "description": "Auditoria completa de OneDrive e SharePoint.",
+      "requires": {
+        "permissions": ["SharePoint Administrator", "Global Administrator"]
+      },
+      "args": [
+        {
+          "key": "TenantName",
+          "label": "Tenant Name",
+          "type": "string",
+          "flag": "-TenantName",
+          "placeholder": "contoso",
+          "required": true
+        },
+        {
+          "key": "OutputPath",
+          "label": "Pasta de saída",
+          "type": "path",
+          "pathKind": "directory",
+          "flag": "-OutputPath",
+          "placeholder": "./Relatorios"
+        },
+        {
+          "key": "ExportJson",
+          "label": "Exportar JSON",
+          "type": "switch",
+          "flag": "-ExportJson"
+        },
+        {
+          "key": "SkipSharingAnalysis",
+          "label": "Pular análise de compartilhamento",
+          "type": "switch",
+          "flag": "-SkipSharingAnalysis"
+        }
+      ]
+    }
+  },
+  "workflows": [
+    {
+      "id": "audit-base",
+      "name": "Auditoria M365 (Base)",
+      "description": "Exchange + Purview + Conditional Access.",
+      "steps": [
+        { "script": "scripts/Exchange/Exchange-Audit.ps1" },
+        { "script": "scripts/Purview/Purview-Audit-PS7.ps1" },
+        { "script": "scripts/EntraID/Analyze-CA-Policies.ps1" }
+      ]
+    },
+    {
+      "id": "audit-completa",
+      "name": "Auditoria M365 (Completa)",
+      "description": "Exchange + Purview + OneDrive.",
+      "inputs": [
+        {
+          "key": "TenantName",
+          "label": "Tenant Name",
+          "placeholder": "contoso",
+          "required": true
+        }
+      ],
+      "steps": [
+        { "script": "scripts/Exchange/Exchange-Audit.ps1" },
+        { "script": "scripts/Purview/Purview-Audit-PS7.ps1" },
+        {
+          "script": "scripts/OneDrive/OneDrive-Complete-Audit.ps1",
+          "args": { "TenantName": "$TenantName" }
+        }
+      ]
+    },
+    {
+      "id": "audit-multi-tenant",
+      "name": "Auditoria Multi‑Tenant",
+      "description": "Executa Exchange + Purview + OneDrive para vários tenants.",
+      "multiTenant": true,
+      "inputs": [
+        {
+          "key": "Tenants",
+          "label": "Tenants (um por linha)",
+          "placeholder": "contoso\nempresa2\nempresa3",
+          "required": true,
+          "type": "textarea"
+        }
+      ],
+      "steps": [
+        { "script": "scripts/Exchange/Exchange-Audit.ps1" },
+        { "script": "scripts/Purview/Purview-Audit-PS7.ps1" },
+        {
+          "script": "scripts/OneDrive/OneDrive-Complete-Audit.ps1",
+          "args": { "TenantName": "$TenantName" }
+        }
+      ]
+    },
+    {
+      "id": "auditoria-remediacao",
+      "name": "Auditoria + Remediação",
+      "description": "Auditar e aplicar correções recomendadas.",
+      "steps": [
+        { "script": "scripts/Exchange/Exchange-Audit.ps1" },
+        { "script": "scripts/Purview/Purview-Audit-PS7.ps1" },
+        { "script": "scripts/Remediation/M365-Remediation.ps1" }
+      ]
+    }
+  ]
+}

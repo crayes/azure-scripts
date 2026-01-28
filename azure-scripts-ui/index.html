@@ -56,9 +56,30 @@
                         <button id="run-btn" class="btn btn-primary" disabled title="Executar script">
                             ▶️ Executar
                         </button>
+                        <button id="queue-add-btn" class="btn btn-secondary" disabled title="Adicionar à fila">
+                            ➕ Fila
+                        </button>
+                        <button id="cancel-btn" class="btn btn-ghost" title="Cancelar execução">
+                            ⏹ Cancelar
+                        </button>
                         <button id="clear-btn" class="btn btn-ghost" title="Limpar output">
                             🗑️ Limpar
                         </button>
+                    </div>
+                </div>
+
+                <!-- Script Details / Parameters -->
+                <div class="script-details">
+                    <div class="details-header">
+                        <h3>⚙️ Parâmetros</h3>
+                        <span id="script-desc" class="script-desc">Selecione um script para ver detalhes.</span>
+                    </div>
+                    <div id="requirements-container" class="requirements-container">
+                        <p class="empty-state">Nenhum requisito.</p>
+                    </div>
+                    <div id="profile-controls" class="profile-controls"></div>
+                    <div id="params-container" class="params-container">
+                        <p class="empty-state">Nenhum parâmetro disponível.</p>
                     </div>
                 </div>
 
@@ -69,6 +90,59 @@
                     </div>
                     <pre id="output" class="output-content"><span class="output-info">Selecione um script e clique em "Executar"...</span></pre>
                 </div>
+
+                <!-- Workflows -->
+                <section class="workflow-section">
+                    <div class="workflow-header">
+                        <h3>🧭 Fluxos Guiados</h3>
+                    </div>
+                    <div id="workflow-list" class="workflow-list">
+                        <p class="loading-state">Carregando fluxos...</p>
+                    </div>
+                </section>
+
+                <!-- Queue -->
+                <section class="queue-section">
+                    <div class="queue-header">
+                        <h3>📥 Fila de Execução</h3>
+                        <button id="queue-run-btn" class="btn btn-primary">▶️ Executar fila</button>
+                    </div>
+                    <div id="queue-list" class="queue-list">
+                        <p class="empty-state">Fila vazia.</p>
+                    </div>
+                </section>
+
+                <!-- History -->
+                <section class="history-section">
+                    <div class="history-header">
+                        <h3>🕘 Histórico</h3>
+                        <button id="history-clear-btn" class="btn btn-ghost">Limpar</button>
+                    </div>
+                    <div id="history-list" class="history-list">
+                        <p class="loading-state">Carregando histórico...</p>
+                    </div>
+                </section>
+
+                <!-- Settings -->
+                <section class="settings-section">
+                    <div class="settings-header">
+                        <h3>⚙️ Configurações</h3>
+                        <button id="settings-save-btn" class="btn btn-primary">Salvar</button>
+                    </div>
+                    <div class="settings-grid">
+                        <label class="settings-item">
+                            <input type="checkbox" id="settings-organize-reports">
+                            Organizar relatórios por tenant/data
+                        </label>
+                        <div class="settings-item">
+                            <label>Diretório base de relatórios</label>
+                            <div class="param-input-row">
+                                <input id="settings-report-path" class="param-input" type="text" placeholder="Selecione um diretório">
+                                <button id="settings-report-browse" class="btn btn-secondary btn-small">📂</button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
 
                 <!-- Features Grid (collapsible) -->
                 <details class="features-section" open>

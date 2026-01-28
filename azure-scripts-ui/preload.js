@@ -14,7 +14,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   /**
    * Obter lista de scripts disponíveis
-   * @returns {Promise<Array<{name, category, path, relativePath}>>}
+  * @returns {Promise<Array<{name, category, path, relativePath, type}>>}
    */
   getScripts: () => ipcRenderer.invoke('get-scripts'),
   
@@ -25,6 +25,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * @returns {Promise<{exitCode, stdout, stderr, success}>}
    */
   runScript: (scriptPath, args = []) => ipcRenderer.invoke('run-script', scriptPath, args),
+
+  /**
+   * Cancelar execução atual
+   * @returns {Promise<{cancelled: boolean}>}
+   */
+  cancelCurrent: () => ipcRenderer.invoke('cancel-current'),
   
   /**
    * Ler conteúdo de um script
@@ -32,6 +38,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * @returns {Promise<string>}
    */
   readScript: (scriptPath) => ipcRenderer.invoke('read-script', scriptPath),
+
+  /**
+   * Obter metadados de um script
+   * @param {string} scriptPath
+   * @returns {Promise<{args: Array, description: string, requires: {version: string|null, modules: string[]}}>} 
+   */
+  getScriptMetadata: (scriptPath) => ipcRenderer.invoke('get-script-metadata', scriptPath),
+
+  /**
+   * Obter manifesto de scripts (metadados e workflows)
+   * @returns {Promise<{scripts: Object, workflows: Array}>}
+   */
+  getManifest: () => ipcRenderer.invoke('get-manifest'),
   
   /**
    * Registrar callback para output em tempo real
@@ -57,6 +76,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * @returns {Promise<{available, executable, version}>}
    */
   checkPowerShell: () => ipcRenderer.invoke('check-powershell'),
+
+  /**
+   * Configurações e perfis
+   */
+  getSettings: () => ipcRenderer.invoke('get-settings'),
+  saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
+  getProfiles: () => ipcRenderer.invoke('get-profiles'),
+  saveProfiles: (profiles) => ipcRenderer.invoke('save-profiles', profiles),
+  getHistory: () => ipcRenderer.invoke('get-history'),
+  clearHistory: () => ipcRenderer.invoke('clear-history'),
+  resolveReportPath: (tenantName) => ipcRenderer.invoke('resolve-report-path', tenantName),
   
   // ==================== Diálogos ====================
   

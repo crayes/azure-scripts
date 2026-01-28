@@ -40,16 +40,21 @@
       "renderer.js",
       "index.html",
       "styles.css",
+      "scripts-manifest.json",
       "assets/**/*"
     ],
     "extraResources": [
       {
         "from": "../scripts",
         "to": "scripts",
-        "filter": ["**/*.ps1"]
+        "filter": ["**/*.ps1", "**/*.sh"]
       },
       {
         "from": "../*.ps1",
+        "to": "."
+      },
+      {
+        "from": "../*.sh",
         "to": "."
       }
     ],

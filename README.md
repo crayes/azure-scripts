@@ -30,6 +30,19 @@ Este toolkit foi desenvolvido para administradores de TI que gerenciam múltiplo
 - **Remediar** problemas de forma automatizada
 - **Documentar** o estado de segurança do ambiente
 
+### 🖥️ Azure Scripts UI (Electron)
+
+> Interface gráfica para executar scripts, configurar parâmetros e rodar fluxos multi‑tenant.
+
+Principais recursos:
+- Parâmetros dinâmicos e perfis por script
+- Fluxos guiados (inclui multi‑tenant)
+- Fila de execução e cancelamento
+- Histórico com logs persistentes
+- Organização automática de relatórios por tenant/data
+
+Veja [azure-scripts-ui/README.md](azure-scripts-ui/README.md) para instalação e uso.
+
 ### ✨ Novidades v4.0
 
 - **Detecção automática de licenças** - Scripts identificam E5/E3/Business Premium automaticamente
