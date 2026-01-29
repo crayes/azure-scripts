@@ -934,3 +934,71 @@ function Show-RollbackInstructions {
     Write-Host '  Set-OwaMailboxPolicy -Identity "OwaMailboxPolicy-Default" -WacExternalServicesEnabled $true' -ForegroundColor White
     Write-Host ""
 }
+
+# ============================================
+# EXECUÇÃO PRINCIPAL
+# ============================================
+
+function Start-M365Remediation {
+    Clear-Host
+    Write-Banner
+
+    # Conectar
+    if (-not $SkipConnection) {
+        try {
+            Connect-ToServices
+        }
+        catch {
+            Write-Status "Falha ao conectar nos serviços. Abortando." "Error"
+            return
+        }
+    }
+    else {
+        Write-Status "Pulando conexão (usando sessão existente)" "Info"
+    }
+
+    # Detectar capacidades do tenant
+    if (-not $SkipCapabilityCheck) {
+        $CapabilitiesLoaded = Initialize-TenantCapabilities
+        if (-not $CapabilitiesLoaded) {
+            Write-Status "Executando remediação sem detecção de capacidades" "Warning"
+        }
+    }
+    else {
+        Write-Status "Detecção de capacidades pulada (-SkipCapabilityCheck)" "Info"
+    }
+
+    # Decidir modo de execução
+    $OnlyMode = ($OnlyRetention -or $OnlyDLP -or $OnlyAlerts)
+
+    Write-Section "🚀" "INICIANDO VARREDURA/REMEDIAÇÃO"
+
+    if (-not $OnlyMode -or $OnlyRetention) {
+        Remediate-RetentionPolicies
+    }
+
+    if (-not $OnlyMode) {
+        Remediate-UnifiedAuditLog
+    }
+
+    if (-not $OnlyMode -or $OnlyDLP) {
+        Remediate-DLPPolicies
+    }
+
+    if (-not $OnlyMode) {
+        Remediate-OWAExternal
+    }
+
+    if (-not $OnlyMode -or $OnlyAlerts) {
+        Remediate-AlertPolicies
+    }
+
+    Show-Summary
+    Show-RollbackInstructions
+
+    Write-Host "  ✅ Remediação concluída!" -ForegroundColor Green
+    Write-Host ""
+}
+
+# Executar
+Start-M365Remediation
