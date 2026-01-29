@@ -931,4 +931,6 @@ function Show-RollbackInstructions {
     Write-Host '  Get-DlpCompliancePolicy | Where-Object {$_.Name -like "DLP -*"} | Remove-DlpCompliancePolicy' -ForegroundColor White
     Write-Host ""
     Write-Host "  # OWA External Services (reativar)" -ForegroundColor Gray
-    Write-Host '  Set-OwaMail
+    Write-Host '  Set-OwaMailboxPolicy -Identity "OwaMailboxPolicy-Default" -WacExternalServicesEnabled $true' -ForegroundColor White
+    Write-Host ""
+}
