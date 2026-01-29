@@ -38,7 +38,7 @@ param(
     [switch]$IncludeDetails,
     [switch]$SkipConnection,
     [switch]$SkipCapabilityCheck,
-    [switch]$GenerateHTML
+    [switch]$GenerateHTML = $true
 )
 
 $ErrorActionPreference = "Continue"
@@ -84,12 +84,12 @@ function Write-Banner {
 
 ╔══════════════════════════════════════════════════════════════════════════╗
 ║                                                                          ║
-║   ██████╗ ██╗   ██╗██████╗ ██╗   ██╗██╗███████╗██╗    ██╗               ║
-║   ██╔══██╗██║   ██║██╔══██╗██║   ██║██║██╔════╝██║    ██║               ║
-║   ██████╔╝██║   ██║██████╔╝██║   ██║██║█████╗  ██║ █╗ ██║               ║
-║   ██╔═══╝ ██║   ██║██╔══██╗╚██╗ ██╔╝██║██╔══╝  ██║███╗██║               ║
-║   ██║     ╚██████╔╝██║  ██║ ╚████╔╝ ██║███████╗╚███╔███╔╝               ║
-║   ╚═╝      ╚═════╝ ╚═╝  ╚═╝  ╚═══╝  ╚═╝╚══════╝ ╚══╝╚══╝                ║
+║   ██████╗ ██╗   ██╗██████╗ ██╗   ██╗██╗███████╗██╗    ██╗                ║
+║   ██╔══██╗██║   ██║██╔══██╗██║   ██║██║██╔════╝██║    ██║                ║
+║   ██████╔╝██║   ██║██████╔╝██║   ██║██║█████╗  ██║ █╗ ██║                ║
+║   ██╔═══╝ ██║   ██║██╔══██╗╚██╗ ██╔╝██║██╔══╝  ██║███╗██║                ║
+║   ██║     ╚██████╔╝██║  ██║ ╚████╔╝ ██║███████╗╚███╔███╔╝                ║
+║   ╚═╝      ╚═════╝ ╚═╝  ╚═╝  ╚═══╝  ╚═╝╚══════╝ ╚══╝╚══╝                 ║
 ║                                                                          ║
 ║   🛡️  AUDITORIA COMPLETA DE SEGURANÇA E COMPLIANCE                       ║
 ║                                                                          ║
@@ -1076,6 +1076,92 @@ function Export-Results {
     
     $Md | Out-File $MdPath -Encoding UTF8
     Write-Status "Markdown: $MdPath" "Success"
+
+    # HTML
+    if ($GenerateHTML) {
+        $HtmlPath = Join-Path $OutputFolder "SUMMARY.html"
+        $TenantName = if ($Script:TenantCaps) { $Script:TenantCaps.TenantInfo.DisplayName } else { "Desconhecido" }
+        $LicenseInfo = if ($Script:TenantCaps) { $Script:TenantCaps.License.Probable } else { "Não detectada" }
+
+        $Categories = @("DLP", "AuditLog", "Retention", "SensitivityLabels", "AlertPolicies", "InsiderRisk", "eDiscovery", "ExternalSharing", "CommunicationCompliance")
+        $CategoryRows = @()
+        foreach ($Cat in $Categories) {
+            if ($Results[$Cat]) {
+                if ($Results[$Cat].Skipped) {
+                    $CategoryRows += "<tr class='na'><td>" + [System.Net.WebUtility]::HtmlEncode($Cat) + "</td><td>N/A</td><td>Não licenciado</td></tr>"
+                }
+                else {
+                    $Score = $Results[$Cat].Score
+                    $Status = if ($Score -ge 80) { "Bom" } elseif ($Score -ge 50) { "Atenção" } else { "Crítico" }
+                    $Class = if ($Score -ge 80) { "good" } elseif ($Score -ge 50) { "warn" } else { "bad" }
+                    $CategoryRows += "<tr class='" + $Class + "'><td>" + [System.Net.WebUtility]::HtmlEncode($Cat) + "</td><td>" + $Score + "%</td><td>" + $Status + "</td></tr>"
+                }
+            }
+        }
+
+        $SkippedHtml = ""
+        if ($Script:SkippedCategories.Count -gt 0) {
+            $SkippedHtml = "<h2>Categorias puladas (não licenciadas)</h2><ul>" + ($Script:SkippedCategories | ForEach-Object { "<li>" + [System.Net.WebUtility]::HtmlEncode($_) + "</li>" }) -join "" + "</ul>"
+        }
+
+        $RecsHtml = "<p>Nenhuma recomendação crítica.</p>"
+        if ($AllRecs.Count -gt 0) {
+            $RecsRows = $AllRecs | ForEach-Object {
+                "<tr><td>" + [System.Net.WebUtility]::HtmlEncode($_.Categoria) + "</td><td>" + [System.Net.WebUtility]::HtmlEncode($_.Prioridade) + "</td><td>" + [System.Net.WebUtility]::HtmlEncode($_.Mensagem) + "</td><td>" + [System.Net.WebUtility]::HtmlEncode($_.Remediacao) + "</td></tr>"
+            }
+            $RecsHtml = "<table><thead><tr><th>Categoria</th><th>Prioridade</th><th>Mensagem</th><th>Remediação</th></tr></thead><tbody>" + ($RecsRows -join "") + "</tbody></table>"
+        }
+
+        $Html = @"
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Relatório de Auditoria Purview</title>
+    <style>
+        body { font-family: Segoe UI, Roboto, Arial, sans-serif; margin: 24px; color: #1f2937; }
+        h1 { margin-bottom: 4px; }
+        .meta { color: #6b7280; margin-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+        th, td { border: 1px solid #e5e7eb; padding: 8px 10px; text-align: left; }
+        th { background: #f3f4f6; }
+        tr.good td { background: #ecfdf5; }
+        tr.warn td { background: #fffbeb; }
+        tr.bad td { background: #fef2f2; }
+        tr.na td { background: #f9fafb; color: #6b7280; }
+        .section { margin-top: 28px; }
+    </style>
+</head>
+<body>
+    <h1>🛡️ Relatório de Auditoria Purview</h1>
+    <div class="meta">Data: $(Get-Date -Format "dd/MM/yyyy HH:mm")<br/>Tenant: $TenantName<br/>Licença Detectada: $LicenseInfo</div>
+
+    <div class="section">
+        <h2>Scores por Categoria</h2>
+        <table>
+            <thead>
+                <tr><th>Categoria</th><th>Score</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+                $($CategoryRows -join "")
+            </tbody>
+        </table>
+    </div>
+
+    $SkippedHtml
+
+    <div class="section">
+        <h2>Recomendações</h2>
+        $RecsHtml
+    </div>
+</body>
+</html>
+"@
+
+        $Html | Out-File $HtmlPath -Encoding UTF8
+        Write-Status "HTML: $HtmlPath" "Success"
+    }
     
     return $OutputFolder
 }
