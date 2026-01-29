@@ -1056,47 +1056,60 @@ function Show-Summary {
 }
 
 function Generate-HTMLReport {
-        $TenantName = if ($Script:TenantCaps) { $Script:TenantCaps.TenantInfo.DisplayName } else { "N/A" }
-        $LicenseName = if ($Script:TenantCaps) { $Script:TenantCaps.License.Probable } else { "N/A" }
+    $TenantName = if ($Script:TenantCaps) { $Script:TenantCaps.TenantInfo.DisplayName } else { "N/A" }
+    $LicenseName = if ($Script:TenantCaps) { $Script:TenantCaps.License.Probable } else { "N/A" }
 
     $SectionsHtml = if ($Script:SectionStatus.Count -gt 0) {
-        ($Script:SectionStatus.Values | ForEach-Object {
-            "<tr><td>$($_.Category)</td><td>$($_.Status)</td><td>$($_.Details)</td></tr>"
-        }) -join ""
+    ($Script:SectionStatus.Values | ForEach-Object {
+        $Status = "$($_.Status)"
+        $Class = switch -Regex ($Status) {
+        "^(OK|Success|Enabled)$" { "good"; break }
+        "Warning" { "warn"; break }
+        "Error" { "bad"; break }
+        "Skip" { "na"; break }
+        default { "" }
+        }
+        "<tr class='" + $Class + "'><td>" + [System.Net.WebUtility]::HtmlEncode($_.Category) + "</td><td>" + [System.Net.WebUtility]::HtmlEncode($Status) + "</td><td>" + [System.Net.WebUtility]::HtmlEncode($_.Details) + "</td></tr>"
+    }) -join ""
     } else {
-        "<tr><td colspan='3'>Sem dados de status</td></tr>"
+    "<tr><td colspan='3'>Sem dados de status</td></tr>"
     }
 
-        $ChangesHtml = if ($Script:Changes.Count -gt 0) {
-                ($Script:Changes | ForEach-Object {
-                        "<tr><td>$($_.Timestamp)</td><td>$($_.Category)</td><td>$($_.Action)</td><td>$($_.Details)</td></tr>"
-                }) -join ""
-        } else {
-                "<tr><td colspan='4'>Nenhuma alteração realizada</td></tr>"
-        }
+    $ChangesHtml = if ($Script:Changes.Count -gt 0) {
+        ($Script:Changes | ForEach-Object {
+            "<tr><td>" + [System.Net.WebUtility]::HtmlEncode($_.Timestamp) + "</td><td>" + [System.Net.WebUtility]::HtmlEncode($_.Category) + "</td><td>" + [System.Net.WebUtility]::HtmlEncode($_.Action) + "</td><td>" + [System.Net.WebUtility]::HtmlEncode($_.Details) + "</td></tr>"
+        }) -join ""
+    } else {
+        "<tr><td colspan='4'>Nenhuma alteração realizada</td></tr>"
+    }
 
-        $SkippedHtml = if ($Script:SkippedItems.Count -gt 0) {
-                ($Script:SkippedItems | ForEach-Object {
-                        "<tr><td>$($_.Category)</td><td>$($_.Reason)</td></tr>"
-                }) -join ""
-        } else {
-                "<tr><td colspan='2'>Nenhum item pulado</td></tr>"
-        }
+    $SkippedHtml = if ($Script:SkippedItems.Count -gt 0) {
+        ($Script:SkippedItems | ForEach-Object {
+            "<tr class='na'><td>" + [System.Net.WebUtility]::HtmlEncode($_.Category) + "</td><td>" + [System.Net.WebUtility]::HtmlEncode($_.Reason) + "</td></tr>"
+        }) -join ""
+    } else {
+        "<tr><td colspan='2'>Nenhum item pulado</td></tr>"
+    }
 
-        $Html = @"
+    $Html = @"
 <!DOCTYPE html>
 <html lang="pt-br">
 <head>
     <meta charset="utf-8" />
     <title>Relatório - Remediação M365</title>
     <style>
-        body { font-family: Arial, sans-serif; background: #0f172a; color: #e2e8f0; margin: 24px; }
-        h1, h2 { color: #38bdf8; }
-        .card { background: #111827; padding: 16px; border-radius: 8px; margin-bottom: 16px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-        th, td { border: 1px solid #1f2937; padding: 8px; text-align: left; }
-        th { background: #1f2937; }
-        .muted { color: #94a3b8; }
+    body { font-family: Segoe UI, Roboto, Arial, sans-serif; margin: 24px; color: #1f2937; }
+    h1 { margin-bottom: 4px; }
+    h2 { margin-top: 0; }
+    .card { background: #ffffff; padding: 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid #e5e7eb; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    th, td { border: 1px solid #e5e7eb; padding: 8px 10px; text-align: left; }
+    th { background: #f3f4f6; }
+    tr.good td { background: #ecfdf5; }
+    tr.warn td { background: #fffbeb; }
+    tr.bad td { background: #fef2f2; }
+    tr.na td { background: #f9fafb; color: #6b7280; }
+    .muted { color: #6b7280; }
     </style>
 </head>
 <body>

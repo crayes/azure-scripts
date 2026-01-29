@@ -91,7 +91,7 @@ function Write-Banner {
 ║   ██║     ╚██████╔╝██║  ██║ ╚████╔╝ ██║███████╗╚███╔███╔╝                ║
 ║   ╚═╝      ╚═════╝ ╚═╝  ╚═╝  ╚═══╝  ╚═╝╚══════╝ ╚══╝╚══╝                 ║
 ║                                                                          ║
-║   🛡️  AUDITORIA COMPLETA DE SEGURANÇA E COMPLIANCE                       ║
+║   🛡️  AUDITORIA COMPLETA DE SEGURANÇA E COMPLIANCE                        ║
 ║                                                                          ║
 ║   Versão 4.0 - Janeiro 2026 (com detecção de capacidades)                ║
 ║   PowerShell 7 Compatible (Windows/macOS/Linux)                          ║
