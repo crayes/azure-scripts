@@ -355,6 +355,8 @@ Aplica configurações de segurança recomendadas com **detecção automática d
 - ✅ **Sem erros de licença** - Pula remediações não disponíveis
 - ✅ **Relatório claro** - Mostra o que foi remediado vs pulado
 - ✅ Integração com `Get-TenantCapabilities.ps1`
+- ✅ **Bypass por módulo/cmdlet** - Se o módulo não estiver disponível, registra no relatório
+- ✅ **Relatório HTML** - Gera relatório final em HTML
 
 ```powershell
 # Execução padrão (detecta capacidades automaticamente)
@@ -395,6 +397,10 @@ Aplica configurações de segurança recomendadas com **detecção automática d
 ```
 
 **⚠️ Importante:** Execute sempre a auditoria antes da remediação!
+
+**Saída adicional (v4.0+):**
+- `M365-Remediation-Backup_<timestamp>.json` - Backup das configurações alteradas
+- `M365-Remediation-Report_<timestamp>.html` - Relatório visual com status, itens pulados e alterações
 
 ---
 

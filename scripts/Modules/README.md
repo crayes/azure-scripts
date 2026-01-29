@@ -250,6 +250,10 @@ O script retorna um objeto `PSCustomObject` com a seguinte estrutura:
 # }
 ```
 
+> **Nota:** Se o módulo/cmdlet não estiver disponível na sessão (ex.: Business Basic ou módulo não carregado),
+> a remediação faz **bypass** da seção e registra o motivo no relatório. O script também gera relatório HTML
+> consolidado ao final (`M365-Remediation-Report_<timestamp>.html`).
+
 ### Em Script Customizado
 
 ```powershell

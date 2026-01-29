@@ -529,7 +529,7 @@ function Remediate-RetentionPolicies {
         }
     }
 
-    if (-not $Script:SectionStatus.ContainsKey("Retention")) {
+    if (-not $Script:SectionStatus.Contains("Retention")) {
         if ($SectionHadError) {
             Set-SectionStatus -Category "Retention" -Status "Warning" -Details "Falhas parciais em políticas"
         }
@@ -738,7 +738,7 @@ function Remediate-DLPPolicies {
         }
     }
 
-    if (-not $Script:SectionStatus.ContainsKey("DLP")) {
+    if (-not $Script:SectionStatus.Contains("DLP")) {
         if ($SectionHadError) {
             Set-SectionStatus -Category "DLP" -Status "Warning" -Details "Falhas parciais em políticas"
         }
@@ -796,7 +796,7 @@ function Remediate-OWAExternal {
         $SectionHadError = $true
     }
 
-    if (-not $Script:SectionStatus.ContainsKey("OWA")) {
+    if (-not $Script:SectionStatus.Contains("OWA")) {
         if ($SectionHadError) {
             Set-SectionStatus -Category "OWA" -Status "Error" -Details "Erro ao configurar OWA"
         }
@@ -940,7 +940,7 @@ function Remediate-AlertPolicies {
     Write-Host ""
     Write-Status "Para gerenciar alertas: https://security.microsoft.com/alertpolicies" "Info"
 
-    if (-not $Script:SectionStatus.ContainsKey("AlertPolicies")) {
+    if (-not $Script:SectionStatus.Contains("AlertPolicies")) {
         if ($SectionHadError) {
             Set-SectionStatus -Category "AlertPolicies" -Status "Warning" -Details "Falhas parciais na criação de alertas"
         }
