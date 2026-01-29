@@ -334,6 +334,14 @@ function Remediate-RetentionPolicies {
         Add-Skipped -Category "Retention" -Reason "Licença não inclui"
         return
     }
+
+    # Verificar se os cmdlets estão disponíveis (módulo/IPPSSession)
+    if (-not (Get-Command -Name New-RetentionCompliancePolicy -ErrorAction SilentlyContinue)) {
+        Write-Status "Cmdlets de retenção não disponíveis nesta sessão (módulo/IPPSSession)" "Skip"
+        Write-Status "Confirme módulo ExchangeOnlineManagement e conexão ao Security & Compliance" "Detail"
+        Add-Skipped -Category "Retention" -Reason "Cmdlet indisponível na sessão"
+        return
+    }
     
     try {
         $ExistingPolicies = Get-RetentionCompliancePolicy -WarningAction SilentlyContinue -ErrorAction Stop
