@@ -63,9 +63,11 @@ param(
 
 $ErrorActionPreference = "Continue"
 $BackupPath = "./M365-Remediation-Backup_$(Get-Date -Format 'yyyyMMdd_HHmmss').json"
+$ReportPath = "./M365-Remediation-Report_$(Get-Date -Format 'yyyyMMdd_HHmmss').html"
 $Script:Backup = @{}
 $Script:Changes = @()
 $Script:SkippedItems = @()
+$Script:SectionStatus = [ordered]@{}
 
 # Capabilities do tenant
 $Script:TenantCaps = $null
@@ -147,6 +149,15 @@ function Add-Skipped {
     $Script:SkippedItems += [PSCustomObject]@{
         Category = $Category
         Reason = $Reason
+    }
+}
+
+function Set-SectionStatus {
+    param([string]$Category, [string]$Status, [string]$Details)
+    $Script:SectionStatus[$Category] = [PSCustomObject]@{
+        Category = $Category
+        Status = $Status
+        Details = $Details
     }
 }
 
@@ -252,6 +263,15 @@ function Connect-ToServices {
 
 function Remediate-UnifiedAuditLog {
     Write-Section "1️⃣" "UNIFIED AUDIT LOG"
+
+    if (-not (Get-Command -Name Search-UnifiedAuditLog -ErrorAction SilentlyContinue)) {
+        Write-Status "Cmdlets de Audit Log não disponíveis (módulo/versão)" "Skip"
+        Add-Skipped -Category "AuditLog" -Reason "Cmdlet indisponível na sessão"
+        Set-SectionStatus -Category "AuditLog" -Status "Skip" -Details "Cmdlet indisponível na sessão"
+        return
+    }
+
+    $SectionHadError = $false
     
     Write-Status "Verificando status real do Audit Log..." "Info"
     
@@ -261,11 +281,13 @@ function Remediate-UnifiedAuditLog {
         if ($null -ne $TestSearch) {
             Write-Status "Unified Audit Log - ATIVO E FUNCIONANDO" "Success"
             Save-Backup -Key "UnifiedAuditLog" -Value "Already Active"
+            Set-SectionStatus -Category "AuditLog" -Status "OK" -Details "Unified Audit Log ativo"
             return
         }
         else {
             Write-Status "Unified Audit Log - Provavelmente ativo (sem atividade recente)" "Warning"
             Save-Backup -Key "UnifiedAuditLog" -Value "Active (no recent data)"
+            Set-SectionStatus -Category "AuditLog" -Status "Warning" -Details "Audit Log sem atividade recente"
             return
         }
     }
@@ -285,6 +307,7 @@ function Remediate-UnifiedAuditLog {
                 catch {
                     Write-Status "Erro ao ativar via PowerShell" "Warning"
                     Write-Status "AÇÃO MANUAL: Acesse https://compliance.microsoft.com > Audit" "Warning"
+                    $SectionHadError = $true
                 }
             }
             else {
@@ -295,6 +318,12 @@ function Remediate-UnifiedAuditLog {
     
     # Mailbox Audit
     Write-Status "Verificando Mailbox Audit por padrão..." "Info"
+
+    if (-not (Get-Command -Name Get-OrganizationConfig -ErrorAction SilentlyContinue)) {
+        Write-Status "Cmdlets do Exchange não disponíveis para Mailbox Audit" "Skip"
+        Add-Skipped -Category "MailboxAudit" -Reason "Cmdlet indisponível na sessão"
+        return
+    }
     
     try {
         $OrgConfig = Get-OrganizationConfig -ErrorAction Stop
@@ -318,6 +347,14 @@ function Remediate-UnifiedAuditLog {
     }
     catch {
         Write-Status "Erro ao verificar Mailbox Audit" "Warning"
+        $SectionHadError = $true
+    }
+
+    if ($SectionHadError) {
+        Set-SectionStatus -Category "AuditLog" -Status "Warning" -Details "Falhas parciais no Audit Log/Mailbox Audit"
+    }
+    else {
+        Set-SectionStatus -Category "AuditLog" -Status "OK" -Details "Audit Log/Mailbox Audit verificados"
     }
 }
 
@@ -332,6 +369,7 @@ function Remediate-RetentionPolicies {
     if (-not (Test-CapabilityAvailable "Retention")) {
         Write-Status "Retention não disponível neste tenant (licença não inclui)" "Skip"
         Add-Skipped -Category "Retention" -Reason "Licença não inclui"
+        Set-SectionStatus -Category "Retention" -Status "Skip" -Details "Licença não inclui Retention"
         return
     }
 
@@ -340,8 +378,11 @@ function Remediate-RetentionPolicies {
         Write-Status "Cmdlets de retenção não disponíveis nesta sessão (módulo/IPPSSession)" "Skip"
         Write-Status "Confirme módulo ExchangeOnlineManagement e conexão ao Security & Compliance" "Detail"
         Add-Skipped -Category "Retention" -Reason "Cmdlet indisponível na sessão"
+        Set-SectionStatus -Category "Retention" -Status "Skip" -Details "Cmdlet indisponível na sessão"
         return
     }
+
+    $SectionHadError = $false
     
     try {
         $ExistingPolicies = Get-RetentionCompliancePolicy -WarningAction SilentlyContinue -ErrorAction Stop
@@ -380,6 +421,7 @@ function Remediate-RetentionPolicies {
                 }
                 catch {
                     Write-Status "Erro ao criar: $($_.Exception.Message)" "Error"
+                    $SectionHadError = $true
                 }
             }
             else {
@@ -422,6 +464,7 @@ function Remediate-RetentionPolicies {
                 }
                 catch {
                     Write-Status "Erro: $($_.Exception.Message)" "Error"
+                    $SectionHadError = $true
                 }
             }
             else {
@@ -463,6 +506,7 @@ function Remediate-RetentionPolicies {
                 }
                 catch {
                     Write-Status "Erro: $($_.Exception.Message)" "Error"
+                    $SectionHadError = $true
                 }
             }
             else {
@@ -477,9 +521,20 @@ function Remediate-RetentionPolicies {
         if ($_.Exception.Message -match "license|not licensed") {
             Write-Status "Retention não disponível (licença)" "Skip"
             Add-Skipped -Category "Retention" -Reason "Licença não inclui"
+            Set-SectionStatus -Category "Retention" -Status "Skip" -Details "Licença não inclui Retention"
         }
         else {
             Write-Status "Erro: $($_.Exception.Message)" "Error"
+            Set-SectionStatus -Category "Retention" -Status "Error" -Details "Erro ao processar Retention"
+        }
+    }
+
+    if (-not $Script:SectionStatus.ContainsKey("Retention")) {
+        if ($SectionHadError) {
+            Set-SectionStatus -Category "Retention" -Status "Warning" -Details "Falhas parciais em políticas"
+        }
+        else {
+            Set-SectionStatus -Category "Retention" -Status "OK" -Details "Políticas verificadas/criadas"
         }
     }
 }
@@ -490,13 +545,23 @@ function Remediate-RetentionPolicies {
 
 function Remediate-DLPPolicies {
     Write-Section "3️⃣" "POLÍTICAS DLP"
+
+    if (-not (Get-Command -Name New-DlpCompliancePolicy -ErrorAction SilentlyContinue)) {
+        Write-Status "Cmdlets de DLP não disponíveis nesta sessão (módulo/versão)" "Skip"
+        Add-Skipped -Category "DLP" -Reason "Cmdlet indisponível na sessão"
+        Set-SectionStatus -Category "DLP" -Status "Skip" -Details "Cmdlet indisponível na sessão"
+        return
+    }
     
     # Verificar se disponível
     if (-not (Test-CapabilityAvailable "DLP")) {
         Write-Status "DLP não disponível neste tenant (licença não inclui)" "Skip"
         Add-Skipped -Category "DLP" -Reason "Licença não inclui DLP"
+        Set-SectionStatus -Category "DLP" -Status "Skip" -Details "Licença não inclui DLP"
         return
     }
+
+    $SectionHadError = $false
     
     # Determinar modo
     if ($DLPAuditOnly) {
@@ -555,6 +620,7 @@ function Remediate-DLPPolicies {
                 }
                 catch {
                     Write-Status "Erro: $($_.Exception.Message)" "Error"
+                    $SectionHadError = $true
                 }
             }
             else {
@@ -600,6 +666,7 @@ function Remediate-DLPPolicies {
                 }
                 catch {
                     Write-Status "Erro: $($_.Exception.Message)" "Error"
+                    $SectionHadError = $true
                 }
             }
             else {
@@ -645,6 +712,7 @@ function Remediate-DLPPolicies {
                 }
                 catch {
                     Write-Status "Erro: $($_.Exception.Message)" "Error"
+                    $SectionHadError = $true
                 }
             }
             else {
@@ -662,9 +730,20 @@ function Remediate-DLPPolicies {
         if ($_.Exception.Message -match "license|not licensed") {
             Write-Status "DLP não disponível (licença)" "Skip"
             Add-Skipped -Category "DLP" -Reason "Licença não inclui DLP"
+            Set-SectionStatus -Category "DLP" -Status "Skip" -Details "Licença não inclui DLP"
         }
         else {
             Write-Status "Erro: $($_.Exception.Message)" "Error"
+            Set-SectionStatus -Category "DLP" -Status "Error" -Details "Erro ao processar DLP"
+        }
+    }
+
+    if (-not $Script:SectionStatus.ContainsKey("DLP")) {
+        if ($SectionHadError) {
+            Set-SectionStatus -Category "DLP" -Status "Warning" -Details "Falhas parciais em políticas"
+        }
+        else {
+            Set-SectionStatus -Category "DLP" -Status "OK" -Details "Políticas verificadas/criadas"
         }
     }
 }
@@ -675,11 +754,21 @@ function Remediate-DLPPolicies {
 
 function Remediate-OWAExternal {
     Write-Section "4️⃣" "OWA - PROVEDORES EXTERNOS"
+
+    if (-not (Get-Command -Name Get-OwaMailboxPolicy -ErrorAction SilentlyContinue)) {
+        Write-Status "Cmdlets do OWA não disponíveis nesta sessão (módulo/versão)" "Skip"
+        Add-Skipped -Category "OWA" -Reason "Cmdlet indisponível na sessão"
+        Set-SectionStatus -Category "OWA" -Status "Skip" -Details "Cmdlet indisponível na sessão"
+        return
+    }
     
     if ($SkipOWABlock) {
         Write-Status "Bloqueio de Dropbox/Google Drive no OWA - PULADO (parâmetro -SkipOWABlock)" "Skip"
+        Set-SectionStatus -Category "OWA" -Status "Skip" -Details "Parâmetro -SkipOWABlock"
         return
     }
+
+    $SectionHadError = $false
     
     try {
         $OwaPolicy = Get-OwaMailboxPolicy -Identity "OwaMailboxPolicy-Default" -ErrorAction Stop
@@ -704,6 +793,16 @@ function Remediate-OWAExternal {
     }
     catch {
         Write-Status "Erro: $($_.Exception.Message)" "Error"
+        $SectionHadError = $true
+    }
+
+    if (-not $Script:SectionStatus.ContainsKey("OWA")) {
+        if ($SectionHadError) {
+            Set-SectionStatus -Category "OWA" -Status "Error" -Details "Erro ao configurar OWA"
+        }
+        else {
+            Set-SectionStatus -Category "OWA" -Status "OK" -Details "OWA verificado/configurado"
+        }
     }
 }
 
@@ -713,13 +812,23 @@ function Remediate-OWAExternal {
 
 function Remediate-AlertPolicies {
     Write-Section "5️⃣" "ALERTAS DE SEGURANÇA"
+
+    if (-not (Get-Command -Name New-ProtectionAlert -ErrorAction SilentlyContinue)) {
+        Write-Status "Cmdlets de Alertas não disponíveis nesta sessão (módulo/versão)" "Skip"
+        Add-Skipped -Category "AlertPolicies" -Reason "Cmdlet indisponível na sessão"
+        Set-SectionStatus -Category "AlertPolicies" -Status "Skip" -Details "Cmdlet indisponível na sessão"
+        return
+    }
     
     # Verificar se disponível
     if (-not (Test-CapabilityAvailable "AlertPolicies")) {
         Write-Status "Alert Policies não disponível neste tenant" "Skip"
         Add-Skipped -Category "AlertPolicies" -Reason "Não disponível"
+        Set-SectionStatus -Category "AlertPolicies" -Status "Skip" -Details "Licença não inclui alertas"
         return
     }
+
+    $SectionHadError = $false
     
     # Determinar tipo de agregação baseado na licença
     $UseAdvancedAggregation = Test-CapabilityAvailable "AdvancedAlerts"
@@ -824,11 +933,21 @@ function Remediate-AlertPolicies {
         }
         catch {
             Write-Status "Erro ao criar $($Alert.Name): $($_.Exception.Message)" "Warning"
+            $SectionHadError = $true
         }
     }
     
     Write-Host ""
     Write-Status "Para gerenciar alertas: https://security.microsoft.com/alertpolicies" "Info"
+
+    if (-not $Script:SectionStatus.ContainsKey("AlertPolicies")) {
+        if ($SectionHadError) {
+            Set-SectionStatus -Category "AlertPolicies" -Status "Warning" -Details "Falhas parciais na criação de alertas"
+        }
+        else {
+            Set-SectionStatus -Category "AlertPolicies" -Status "OK" -Details "Alertas verificados/criados"
+        }
+    }
 }
 
 # ============================================
@@ -926,6 +1045,97 @@ function Show-Summary {
     Write-Host ""
 }
 
+function Generate-HTMLReport {
+        $TenantName = if ($Script:TenantCaps) { $Script:TenantCaps.TenantInfo.DisplayName } else { "N/A" }
+        $LicenseName = if ($Script:TenantCaps) { $Script:TenantCaps.License.Probable } else { "N/A" }
+
+    $SectionsHtml = if ($Script:SectionStatus.Count -gt 0) {
+        ($Script:SectionStatus.Values | ForEach-Object {
+            "<tr><td>$($_.Category)</td><td>$($_.Status)</td><td>$($_.Details)</td></tr>"
+        }) -join ""
+    } else {
+        "<tr><td colspan='3'>Sem dados de status</td></tr>"
+    }
+
+        $ChangesHtml = if ($Script:Changes.Count -gt 0) {
+                ($Script:Changes | ForEach-Object {
+                        "<tr><td>$($_.Timestamp)</td><td>$($_.Category)</td><td>$($_.Action)</td><td>$($_.Details)</td></tr>"
+                }) -join ""
+        } else {
+                "<tr><td colspan='4'>Nenhuma alteração realizada</td></tr>"
+        }
+
+        $SkippedHtml = if ($Script:SkippedItems.Count -gt 0) {
+                ($Script:SkippedItems | ForEach-Object {
+                        "<tr><td>$($_.Category)</td><td>$($_.Reason)</td></tr>"
+                }) -join ""
+        } else {
+                "<tr><td colspan='2'>Nenhum item pulado</td></tr>"
+        }
+
+        $Html = @"
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="utf-8" />
+    <title>Relatório - Remediação M365</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #0f172a; color: #e2e8f0; margin: 24px; }
+        h1, h2 { color: #38bdf8; }
+        .card { background: #111827; padding: 16px; border-radius: 8px; margin-bottom: 16px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+        th, td { border: 1px solid #1f2937; padding: 8px; text-align: left; }
+        th { background: #1f2937; }
+        .muted { color: #94a3b8; }
+    </style>
+</head>
+<body>
+    <h1>Relatório de Remediação M365</h1>
+    <div class="card">
+        <p><strong>Data:</strong> $(Get-Date)</p>
+        <p><strong>Tenant:</strong> $TenantName</p>
+        <p><strong>Licença:</strong> $LicenseName</p>
+        <p><strong>Backup:</strong> $BackupPath</p>
+    </div>
+
+    <div class="card">
+        <h2>Status por Seção</h2>
+        <table>
+            <thead><tr><th>Seção</th><th>Status</th><th>Detalhes</th></tr></thead>
+            <tbody>
+                $SectionsHtml
+            </tbody>
+        </table>
+    </div>
+
+    <div class="card">
+        <h2>Itens Pulados (bypass)</h2>
+        <table>
+            <thead><tr><th>Categoria</th><th>Motivo</th></tr></thead>
+            <tbody>
+                $SkippedHtml
+            </tbody>
+        </table>
+        <p class="muted">Motivos comuns: licença não inclui, cmdlet/módulo indisponível na sessão.</p>
+    </div>
+
+    <div class="card">
+        <h2>Alterações Realizadas</h2>
+        <table>
+            <thead><tr><th>Hora</th><th>Categoria</th><th>Ação</th><th>Detalhes</th></tr></thead>
+            <tbody>
+                $ChangesHtml
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>
+"@
+
+        $Html | Out-File $ReportPath -Encoding UTF8
+        Write-Status "Relatório HTML salvo em: $ReportPath" "Success"
+}
+
 function Show-RollbackInstructions {
     Write-Section "🔙" "INSTRUÇÕES DE ROLLBACK"
     
@@ -1003,6 +1213,7 @@ function Start-M365Remediation {
 
     Show-Summary
     Show-RollbackInstructions
+    Generate-HTMLReport
 
     Write-Host "  ✅ Remediação concluída!" -ForegroundColor Green
     Write-Host ""
