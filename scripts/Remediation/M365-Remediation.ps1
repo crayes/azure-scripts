@@ -116,11 +116,11 @@ function Write-Status {
     
     $Config = switch ($Type) {
         "Success" { @{ Color = "Green";   Prefix = "  ✅" } }
-        "Warning" { @{ Color = "Yellow";  Prefix = "  ⚠️ " } }
+        "Warning" { @{ Color = "Magenta"; Prefix = "  ⚠️ " } }
         "Error"   { @{ Color = "Red";     Prefix = "  ❌" } }
         "Info"    { @{ Color = "White";   Prefix = "  📋" } }
         "Action"  { @{ Color = "Cyan";    Prefix = "  🔧" } }
-        "Skip"    { @{ Color = "DarkGray"; Prefix = "  ⏭️ " } }
+        "Skip"    { @{ Color = "Cyan";    Prefix = "  ⏭️ " } }
         "Detail"  { @{ Color = "Gray";    Prefix = "     •" } }
         default   { @{ Color = "White";   Prefix = "  " } }
     }
@@ -266,6 +266,7 @@ function Remediate-UnifiedAuditLog {
 
     if (-not (Get-Command -Name Search-UnifiedAuditLog -ErrorAction SilentlyContinue)) {
         Write-Status "Cmdlets de Audit Log não disponíveis (módulo/versão)" "Skip"
+        Write-Status "Bypass: módulo/cmdlet não suportado na versão atual" "Detail"
         Add-Skipped -Category "AuditLog" -Reason "Cmdlet indisponível na sessão"
         Set-SectionStatus -Category "AuditLog" -Status "Skip" -Details "Cmdlet indisponível na sessão"
         return
@@ -321,6 +322,7 @@ function Remediate-UnifiedAuditLog {
 
     if (-not (Get-Command -Name Get-OrganizationConfig -ErrorAction SilentlyContinue)) {
         Write-Status "Cmdlets do Exchange não disponíveis para Mailbox Audit" "Skip"
+        Write-Status "Bypass: módulo/cmdlet não suportado na versão atual" "Detail"
         Add-Skipped -Category "MailboxAudit" -Reason "Cmdlet indisponível na sessão"
         return
     }
@@ -368,6 +370,7 @@ function Remediate-RetentionPolicies {
     # Verificar se disponível
     if (-not (Test-CapabilityAvailable "Retention")) {
         Write-Status "Retention não disponível neste tenant (licença não inclui)" "Skip"
+        Write-Status "Bypass: licença não contempla Retention" "Detail"
         Add-Skipped -Category "Retention" -Reason "Licença não inclui"
         Set-SectionStatus -Category "Retention" -Status "Skip" -Details "Licença não inclui Retention"
         return
@@ -376,6 +379,7 @@ function Remediate-RetentionPolicies {
     # Verificar se os cmdlets estão disponíveis (módulo/IPPSSession)
     if (-not (Get-Command -Name New-RetentionCompliancePolicy -ErrorAction SilentlyContinue)) {
         Write-Status "Cmdlets de retenção não disponíveis nesta sessão (módulo/IPPSSession)" "Skip"
+        Write-Status "Bypass: módulo/cmdlet não suportado na versão atual" "Detail"
         Write-Status "Confirme módulo ExchangeOnlineManagement e conexão ao Security & Compliance" "Detail"
         Add-Skipped -Category "Retention" -Reason "Cmdlet indisponível na sessão"
         Set-SectionStatus -Category "Retention" -Status "Skip" -Details "Cmdlet indisponível na sessão"
@@ -548,6 +552,7 @@ function Remediate-DLPPolicies {
 
     if (-not (Get-Command -Name New-DlpCompliancePolicy -ErrorAction SilentlyContinue)) {
         Write-Status "Cmdlets de DLP não disponíveis nesta sessão (módulo/versão)" "Skip"
+        Write-Status "Bypass: módulo/cmdlet não suportado na versão atual" "Detail"
         Add-Skipped -Category "DLP" -Reason "Cmdlet indisponível na sessão"
         Set-SectionStatus -Category "DLP" -Status "Skip" -Details "Cmdlet indisponível na sessão"
         return
@@ -556,6 +561,7 @@ function Remediate-DLPPolicies {
     # Verificar se disponível
     if (-not (Test-CapabilityAvailable "DLP")) {
         Write-Status "DLP não disponível neste tenant (licença não inclui)" "Skip"
+        Write-Status "Bypass: licença não contempla DLP" "Detail"
         Add-Skipped -Category "DLP" -Reason "Licença não inclui DLP"
         Set-SectionStatus -Category "DLP" -Status "Skip" -Details "Licença não inclui DLP"
         return
@@ -757,6 +763,7 @@ function Remediate-OWAExternal {
 
     if (-not (Get-Command -Name Get-OwaMailboxPolicy -ErrorAction SilentlyContinue)) {
         Write-Status "Cmdlets do OWA não disponíveis nesta sessão (módulo/versão)" "Skip"
+        Write-Status "Bypass: módulo/cmdlet não suportado na versão atual" "Detail"
         Add-Skipped -Category "OWA" -Reason "Cmdlet indisponível na sessão"
         Set-SectionStatus -Category "OWA" -Status "Skip" -Details "Cmdlet indisponível na sessão"
         return
@@ -764,6 +771,7 @@ function Remediate-OWAExternal {
     
     if ($SkipOWABlock) {
         Write-Status "Bloqueio de Dropbox/Google Drive no OWA - PULADO (parâmetro -SkipOWABlock)" "Skip"
+        Write-Status "Bypass: execução solicitada pelo parâmetro" "Detail"
         Set-SectionStatus -Category "OWA" -Status "Skip" -Details "Parâmetro -SkipOWABlock"
         return
     }
@@ -815,6 +823,7 @@ function Remediate-AlertPolicies {
 
     if (-not (Get-Command -Name New-ProtectionAlert -ErrorAction SilentlyContinue)) {
         Write-Status "Cmdlets de Alertas não disponíveis nesta sessão (módulo/versão)" "Skip"
+        Write-Status "Bypass: módulo/cmdlet não suportado na versão atual" "Detail"
         Add-Skipped -Category "AlertPolicies" -Reason "Cmdlet indisponível na sessão"
         Set-SectionStatus -Category "AlertPolicies" -Status "Skip" -Details "Cmdlet indisponível na sessão"
         return
@@ -823,6 +832,7 @@ function Remediate-AlertPolicies {
     # Verificar se disponível
     if (-not (Test-CapabilityAvailable "AlertPolicies")) {
         Write-Status "Alert Policies não disponível neste tenant" "Skip"
+        Write-Status "Bypass: licença não contempla Alert Policies" "Detail"
         Add-Skipped -Category "AlertPolicies" -Reason "Não disponível"
         Set-SectionStatus -Category "AlertPolicies" -Status "Skip" -Details "Licença não inclui alertas"
         return
