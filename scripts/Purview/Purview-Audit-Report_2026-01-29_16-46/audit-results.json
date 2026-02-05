@@ -1,0 +1,717 @@
+{
+  "SensitivityLabels": {
+    "Details": {
+      "ParentLabels": 5,
+      "TotalLabels": 12,
+      "ChildLabels": 7
+    },
+    "Skipped": false,
+    "Score": 100.0,
+    "Policies": [
+      {
+        "Name": "Global sensitivity label policy",
+        "Enabled": true
+      }
+    ],
+    "Recommendations": [],
+    "Labels": [
+      {
+        "DisplayName": "Personal",
+        "ParentId": null,
+        "Priority": 0,
+        "Name": "defa4170-0d19-0005-0000-bc88714345d2"
+      },
+      {
+        "DisplayName": "Public",
+        "ParentId": null,
+        "Priority": 1,
+        "Name": "defa4170-0d19-0005-0001-bc88714345d2"
+      },
+      {
+        "DisplayName": "General",
+        "ParentId": null,
+        "Priority": 2,
+        "Name": "defa4170-0d19-0005-0002-bc88714345d2"
+      },
+      {
+        "DisplayName": "Anyone (unrestricted)",
+        "ParentId": "9c464bd2-5096-466c-9b30-0530f88d0a0f",
+        "Priority": 3,
+        "Name": "defa4170-0d19-0005-0003-bc88714345d2"
+      },
+      {
+        "DisplayName": "All Employees (unrestricted)",
+        "ParentId": "9c464bd2-5096-466c-9b30-0530f88d0a0f",
+        "Priority": 4,
+        "Name": "defa4170-0d19-0005-0004-bc88714345d2"
+      },
+      {
+        "DisplayName": "Confidential",
+        "ParentId": null,
+        "Priority": 5,
+        "Name": "defa4170-0d19-0005-0005-bc88714345d2"
+      },
+      {
+        "DisplayName": "Anyone (unrestricted)",
+        "ParentId": "e5582cb7-0bb4-4c2d-8d8d-9b2f134b1746",
+        "Priority": 6,
+        "Name": "defa4170-0d19-0005-0006-bc88714345d2"
+      },
+      {
+        "DisplayName": "All Employees",
+        "ParentId": "e5582cb7-0bb4-4c2d-8d8d-9b2f134b1746",
+        "Priority": 7,
+        "Name": "defa4170-0d19-0005-0007-bc88714345d2"
+      },
+      {
+        "DisplayName": "Trusted People",
+        "ParentId": "e5582cb7-0bb4-4c2d-8d8d-9b2f134b1746",
+        "Priority": 8,
+        "Name": "defa4170-0d19-0005-0008-bc88714345d2"
+      },
+      {
+        "DisplayName": "Highly Confidential",
+        "ParentId": null,
+        "Priority": 9,
+        "Name": "defa4170-0d19-0005-0009-bc88714345d2"
+      },
+      {
+        "DisplayName": "All Employees",
+        "ParentId": "3b7db127-3521-4384-84f3-77e37396ee36",
+        "Priority": 10,
+        "Name": "defa4170-0d19-0005-000a-bc88714345d2"
+      },
+      {
+        "DisplayName": "Specific People",
+        "ParentId": "3b7db127-3521-4384-84f3-77e37396ee36",
+        "Priority": 11,
+        "Name": "defa4170-0d19-0005-000b-bc88714345d2"
+      }
+    ]
+  },
+  "ExternalSharing": {
+    "OWAPolicies": [
+      {
+        "WacExternalServicesEnabled": false,
+        "Name": "OwaMailboxPolicy-Default"
+      }
+    ],
+    "Recommendations": [],
+    "Details": {
+      "WacExternalDisabled": 1
+    },
+    "Skipped": false,
+    "Score": 100.0
+  },
+  "AlertPolicies": {
+    "Score": 99.0,
+    "Recommendations": [],
+    "Details": {
+      "CustomPolicies": 18,
+      "TotalPolicies": 67,
+      "SystemPolicies": 49,
+      "AdvancedAlertsAvailable": false,
+      "EnabledPolicies": 66
+    },
+    "Skipped": false,
+    "Policies": [
+      {
+        "IsSystemRule": false,
+        "Severity": "Low",
+        "Enabled": true,
+        "Name": "DLP-Adaptive Protection audit rule for Teams and Exchange DLP"
+      },
+      {
+        "IsSystemRule": false,
+        "Severity": "High",
+        "Enabled": true,
+        "Name": "RFAA - Permissão de Mailbox Alterada"
+      },
+      {
+        "IsSystemRule": false,
+        "Severity": "High",
+        "Enabled": true,
+        "Name": "Custom - Massa de Arquivos Deletados"
+      },
+      {
+        "IsSystemRule": false,
+        "Severity": "Low",
+        "Enabled": true,
+        "Name": "DLP-Adaptive Protection block rule for Endpoint DLP"
+      },
+      {
+        "IsSystemRule": false,
+        "Severity": "Medium",
+        "Enabled": true,
+        "Name": "Custom - Permissao Mailbox Delegada"
+      },
+      {
+        "IsSystemRule": false,
+        "Severity": "Low",
+        "Enabled": true,
+        "Name": "DLP-Adaptive Protection audit rule for Endpoint DLP"
+      },
+      {
+        "IsSystemRule": false,
+        "Severity": "Medium",
+        "Enabled": true,
+        "Name": "Custom - Nova Regra Inbox Suspeita"
+      },
+      {
+        "IsSystemRule": false,
+        "Severity": "High",
+        "Enabled": true,
+        "Name": "Custom - Forwarding Externo Configurado"
+      },
+      {
+        "IsSystemRule": false,
+        "Severity": "Low",
+        "Enabled": true,
+        "Name": "DLP-Adaptive Protection block rule for Teams and Exchange DLP"
+      },
+      {
+        "IsSystemRule": false,
+        "Severity": "High",
+        "Enabled": true,
+        "Name": "RFAA - Forwarding Configurado"
+      },
+      {
+        "IsSystemRule": false,
+        "Severity": "High",
+        "Enabled": true,
+        "Name": "Custom - Malware Detectado"
+      },
+      {
+        "IsSystemRule": false,
+        "Severity": "High",
+        "Enabled": true,
+        "Name": "Custom - Admin Role Atribuida"
+      },
+      {
+        "IsSystemRule": false,
+        "Severity": "Medium",
+        "Enabled": true,
+        "Name": "Custom - Forwarding Configurado"
+      },
+      {
+        "IsSystemRule": false,
+        "Severity": "Medium",
+        "Enabled": true,
+        "Name": "CC_User-reported messages"
+      },
+      {
+        "IsSystemRule": false,
+        "Severity": "Low",
+        "Enabled": true,
+        "Name": "DLP-Recommended rule for Teams"
+      },
+      {
+        "IsSystemRule": false,
+        "Severity": "Medium",
+        "Enabled": true,
+        "Name": "RFAA - Nova Regra de Inbox Criada"
+      },
+      {
+        "IsSystemRule": false,
+        "Severity": "Medium",
+        "Enabled": true,
+        "Name": "DLP-Default policy for devices rule - High volume"
+      },
+      {
+        "IsSystemRule": false,
+        "Severity": "Medium",
+        "Enabled": true,
+        "Name": "Custom - Permissão Mailbox Alterada"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Low",
+        "Enabled": true,
+        "Name": "MIP AutoLabel simulation completed"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Medium",
+        "Enabled": true,
+        "Name": "Suspicious email sending patterns detected"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Informational",
+        "Enabled": true,
+        "Name": "Email messages removed after delivery​"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Informational",
+        "Enabled": true,
+        "Name": "Email messages from a campaign removed after delivery​"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Medium",
+        "Enabled": true,
+        "Name": "Admin triggered user compromise investigation"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "High",
+        "Enabled": true,
+        "Name": "A user clicked through to a potentially malicious URL​"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "High",
+        "Enabled": true,
+        "Name": "Suspicious connector activity"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Low",
+        "Enabled": true,
+        "Name": "Successful exact data match upload"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Informational",
+        "Enabled": true,
+        "Name": "Administrative action submitted by an Administrator"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Low",
+        "Enabled": true,
+        "Name": "Elevation of Exchange admin privilege"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "High",
+        "Enabled": true,
+        "Name": "Reply-all storm detected"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Informational",
+        "Enabled": true,
+        "Name": "Email messages containing malware removed after delivery"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Informational",
+        "Enabled": true,
+        "Name": "Email messages containing malicious URL removed after delivery​"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "High",
+        "Enabled": true,
+        "Name": "User restricted from sharing forms and collecting responses"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Low",
+        "Enabled": true,
+        "Name": "Email reported by user as malware or phish"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Low",
+        "Enabled": true,
+        "Name": "Retention Auto-labeling Policy Simulation Completed"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Informational",
+        "Enabled": true,
+        "Name": "Admin triggered manual investigation of email"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Informational",
+        "Enabled": true,
+        "Name": "eDiscovery search started or exported"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Informational",
+        "Enabled": true,
+        "Name": "User requested to release a quarantined message"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Informational",
+        "Enabled": true,
+        "Name": "Email messages containing malicious file removed after delivery​"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "High",
+        "Enabled": true,
+        "Name": "Noisy Alert Policy Throttled"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "High",
+        "Enabled": true,
+        "Name": "Potential Nation-State Activity"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Informational",
+        "Enabled": true,
+        "Name": "Admin Submission Result Completed"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Medium",
+        "Enabled": true,
+        "Name": "Email sending limit exceeded"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Informational",
+        "Enabled": false,
+        "Name": "Creation of forwarding/redirect rule"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "High",
+        "Enabled": true,
+        "Name": "Priority accounts' mail flow is unhealthy"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "High",
+        "Enabled": true,
+        "Name": "User restricted from sending email"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Informational",
+        "Enabled": true,
+        "Name": "Removed an entry in Tenant Allow/Block List"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Low",
+        "Enabled": true,
+        "Name": "Email reported by user as junk"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Medium",
+        "Enabled": true,
+        "Name": "Messages containing malicious entity not removed after delivery"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Low",
+        "Enabled": true,
+        "Name": "Purview policy simulation completed"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Medium",
+        "Enabled": true,
+        "Name": "Unusual volume of external file sharing"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "High",
+        "Enabled": true,
+        "Name": "Form blocked due to potential phishing attempt"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Low",
+        "Enabled": true,
+        "Name": "Teams message reported by user as security risk"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "High",
+        "Enabled": true,
+        "Name": "Suspicious Email Forwarding Activity"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Informational",
+        "Enabled": true,
+        "Name": "Email messages containing phish URLs removed after delivery"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "High",
+        "Enabled": true,
+        "Name": "Messages have been delayed"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Medium",
+        "Enabled": true,
+        "Name": "Compliance Manager Default Alert Policy"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "High",
+        "Enabled": true,
+        "Name": "Tenant restricted from sending unprovisioned email"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "High",
+        "Enabled": true,
+        "Name": "Noisy Alert Policy Throttled Warning"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "High",
+        "Enabled": true,
+        "Name": "Tenant restricted from sending email"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Informational",
+        "Enabled": true,
+        "Name": "A Tenant Allow Block List entry has been found malicious"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Low",
+        "Enabled": true,
+        "Name": "Email reported by user as not junk"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "High",
+        "Enabled": true,
+        "Name": "Failed exact data match upload"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Low",
+        "Enabled": true,
+        "Name": "Teams message reported by user as not security risk"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "High",
+        "Enabled": true,
+        "Name": "Form flagged and confirmed as phishing"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "Informational",
+        "Enabled": true,
+        "Name": "Tenant Allow/Block List entry is about to expire"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "High",
+        "Enabled": true,
+        "Name": "Suspicious tenant sending patterns observed"
+      },
+      {
+        "IsSystemRule": true,
+        "Severity": "High",
+        "Enabled": true,
+        "Name": "A potentially malicious URL click was detected"
+      }
+    ]
+  },
+  "InsiderRisk": {
+    "Score": 100.0,
+    "Recommendations": [],
+    "Details": {
+      "ActivePolicies": 2,
+      "TotalPolicies": 2
+    },
+    "Skipped": false,
+    "Policies": [
+      {
+        "Enabled": true,
+        "Name": "IRM_Tenant_Setting_564b30d9-0430-428e-95c0-3c68792dc401"
+      },
+      {
+        "Enabled": true,
+        "Name": "Adaptive Protection policy for Insider Risk Management"
+      }
+    ]
+  },
+  "Retention": {
+    "Details": {
+      "EnabledPolicies": 4,
+      "TotalLabels": 4,
+      "TotalPolicies": 4
+    },
+    "Skipped": false,
+    "Score": 100.0,
+    "Policies": [
+      {
+        "Enabled": true,
+        "Workload": "Exchange, SharePoint, OneDriveForBusiness, Skype, ModernGroup, DynamicScope",
+        "Name": "Retencao Teams - Mensagens 1 Ano"
+      },
+      {
+        "Enabled": true,
+        "Workload": "Exchange, SharePoint, OneDriveForBusiness, Skype, ModernGroup, DynamicScope",
+        "Name": "Retencao Documentos - 3 Anos"
+      },
+      {
+        "Enabled": true,
+        "Workload": "Exchange, SharePoint, OneDriveForBusiness, Skype, ModernGroup, DynamicScope",
+        "Name": "Retencao Dados Sensiveis - 7 Anos"
+      },
+      {
+        "Enabled": true,
+        "Workload": "Exchange, SharePoint, OneDriveForBusiness, Skype, ModernGroup, DynamicScope",
+        "Name": "Polita de Retenção de e-mails"
+      }
+    ],
+    "Recommendations": [],
+    "Labels": []
+  },
+  "SkippedCategories": [],
+  "AuditLog": {
+    "Recommendations": [],
+    "MailboxAuditEnabled": true,
+    "Score": 100,
+    "UnifiedAuditEnabled": true,
+    "RecentActivityFound": true,
+    "AuditLogSearchable": true,
+    "Details": {
+      "MethodUsed": "Search-UnifiedAuditLog",
+      "TestSearchResults": 5,
+      "LastActivityDate": "2026-01-29T20:40:18Z"
+    },
+    "Skipped": false
+  },
+  "eDiscovery": {
+    "Cases": [],
+    "Recommendations": [],
+    "Details": {
+      "ActiveCases": 1,
+      "PremiumAvailable": true,
+      "TotalCases": 2
+    },
+    "Skipped": false,
+    "Score": 100
+  },
+  "CommunicationCompliance": {
+    "Score": 100.0,
+    "Recommendations": [],
+    "Details": {
+      "ActivePolicies": 1,
+      "TotalPolicies": 1
+    },
+    "Skipped": false,
+    "Policies": []
+  },
+  "DLP": {
+    "Details": {
+      "TotalPolicies": 8,
+      "TestModePolicies": 1,
+      "WorkloadCoverage": [
+        {
+          "Policies": 2,
+          "Workload": "Exchange, SharePoint, OneDriveForBusiness, EndpointDevices"
+        },
+        {
+          "Policies": 5,
+          "Workload": "Exchange, SharePoint, OneDriveForBusiness, Teams"
+        },
+        {
+          "Policies": 1,
+          "Workload": "Exchange, SharePoint, OneDriveForBusiness, Applications"
+        }
+      ],
+      "DisabledRules": 2,
+      "TotalRules": 11,
+      "EnabledPolicies": 6
+    },
+    "Rules": [],
+    "Score": 70.0,
+    "Policies": [
+      {
+        "Priority": 0,
+        "Mode": "Enable",
+        "Enabled": true,
+        "Workload": "Exchange, SharePoint, OneDriveForBusiness, EndpointDevices",
+        "Name": "Default policy for devices"
+      },
+      {
+        "Priority": 1,
+        "Mode": "Enable",
+        "Enabled": true,
+        "Workload": "Exchange, SharePoint, OneDriveForBusiness, Teams",
+        "Name": "Default DLP policy for Teams"
+      },
+      {
+        "Priority": 2,
+        "Mode": "Enable",
+        "Enabled": true,
+        "Workload": "Exchange, SharePoint, OneDriveForBusiness, EndpointDevices",
+        "Name": "Adaptive Protection policy for Endpoint DLP"
+      },
+      {
+        "Priority": 3,
+        "Mode": "Enable",
+        "Enabled": true,
+        "Workload": "Exchange, SharePoint, OneDriveForBusiness, Teams",
+        "Name": "Adaptive Protection policy for Teams and Exchange DLP"
+      },
+      {
+        "Priority": 4,
+        "Mode": "Enable",
+        "Enabled": true,
+        "Workload": "Exchange, SharePoint, OneDriveForBusiness, Applications",
+        "Name": "Default DLP policy - Protect sensitive M365 Copilot interactions"
+      },
+      {
+        "Priority": 5,
+        "Mode": "TestWithNotifications",
+        "Enabled": true,
+        "Workload": "Exchange, SharePoint, OneDriveForBusiness, Teams",
+        "Name": "DLP - Protecao CPF Brasileiro"
+      },
+      {
+        "Priority": 6,
+        "Mode": "Disable",
+        "Enabled": false,
+        "Workload": "Exchange, SharePoint, OneDriveForBusiness, Teams",
+        "Name": "DLP - Protecao CNPJ"
+      },
+      {
+        "Priority": 7,
+        "Mode": "Disable",
+        "Enabled": false,
+        "Workload": "Exchange, SharePoint, OneDriveForBusiness, Teams",
+        "Name": "DLP - Protecao Cartao de Credito"
+      }
+    ],
+    "Recommendations": [
+      {
+        "Message": "Workloads sem proteção DLP: Exchange, SharePoint, OneDriveForBusiness, Teams",
+        "Priority": "High",
+        "Category": "DLP",
+        "Remediation": "Crie políticas DLP que incluam esses workloads"
+      }
+    ],
+    "Skipped": false
+  },
+  "TenantInfo": {
+    "DisplayName": "Rayes Fagundes Advogados Associados",
+    "Domain": "rfaasp",
+    "DetectedAt": "2026-01-29 16:47:27",
+    "Name": "rfaasp.onmicrosoft.com"
+  },
+  "DetectedLicense": {
+    "Probable": "Microsoft 365 E3 / Business Premium",
+    "Confidence": "Média",
+    "Features": [
+      "DLP",
+      "Retention",
+      "Alertas Básicos"
+    ]
+  }
+}

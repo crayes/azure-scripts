@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Relatório de Auditoria Purview</title>
+    <style>
+        body { font-family: Segoe UI, Roboto, Arial, sans-serif; margin: 24px; color: #1f2937; }
+        h1 { margin-bottom: 4px; }
+        .meta { color: #6b7280; margin-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+        th, td { border: 1px solid #e5e7eb; padding: 8px 10px; text-align: left; }
+        th { background: #f3f4f6; }
+        tr.good td { background: #ecfdf5; }
+        tr.warn td { background: #fffbeb; }
+        tr.bad td { background: #fef2f2; }
+        tr.na td { background: #f9fafb; color: #6b7280; }
+        .section { margin-top: 28px; }
+    </style>
+</head>
+<body>
+    <h1>🛡️ Relatório de Auditoria Purview</h1>
+    <div class="meta">Data: 29/01/2026 16:49<br/>Tenant: Rayes Fagundes Advogados Associados<br/>Licença Detectada: Microsoft 365 E3 / Business Premium</div>
+
+    <div class="section">
+        <h2>Scores por Categoria</h2>
+        <table>
+            <thead>
+                <tr><th>Categoria</th><th>Score</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+                <tr class='warn'><td>DLP</td><td>70%</td><td>Atenção</td></tr><tr class='good'><td>AuditLog</td><td>100%</td><td>Bom</td></tr><tr class='good'><td>Retention</td><td>100%</td><td>Bom</td></tr><tr class='good'><td>SensitivityLabels</td><td>100%</td><td>Bom</td></tr><tr class='good'><td>AlertPolicies</td><td>99%</td><td>Bom</td></tr><tr class='good'><td>InsiderRisk</td><td>100%</td><td>Bom</td></tr><tr class='good'><td>eDiscovery</td><td>100%</td><td>Bom</td></tr><tr class='good'><td>ExternalSharing</td><td>100%</td><td>Bom</td></tr><tr class='good'><td>CommunicationCompliance</td><td>100%</td><td>Bom</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    
+
+    <div class="section">
+        <h2>Recomendações</h2>
+        <table><thead><tr><th>Categoria</th><th>Prioridade</th><th>Mensagem</th><th>Remediação</th></tr></thead><tbody><tr><td>DLP</td><td>High</td><td>Workloads sem prote&#231;&#227;o DLP: Exchange, SharePoint, OneDriveForBusiness, Teams</td><td>Crie pol&#237;ticas DLP que incluam esses workloads</td></tr></tbody></table>
+    </div>
+</body>
+</html>
