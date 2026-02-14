@@ -56,11 +56,9 @@ $clientes = @("RFAA", "ClienteB", "ClienteC")
 
 foreach ($cliente in $clientes) {
     Write-Host "Auditando: $cliente" -ForegroundColor Cyan
-    # Desconectar sessão anterior
     Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue
     Disconnect-MgGraph -ErrorAction SilentlyContinue
     
-    # Auditar (vai pedir login para cada tenant)
     ./Audit-ImplementedPolicies.ps1 -TenantName $cliente
 }
 ```
