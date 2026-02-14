@@ -2,7 +2,7 @@
 .SYNOPSIS
     Remediação de Segurança Microsoft 365 / Purview
 .DESCRIPTION
-    Versão 4.1 - Integrado com Purview Compliance Manager Evidence
+    Versão 4.1.1 - Fix: approved verbs + WarningAction resilience
     
     NOVIDADES v4.1:
     - Geração automática de evidências para o Purview Compliance Manager
@@ -29,7 +29,7 @@
 .AUTHOR
     M365 Security Toolkit - RFAA
 .VERSION
-    4.1 - Fevereiro 2026 - Integração com Purview Compliance Manager Evidence
+    4.1.1 - Fevereiro 2026 - Fix: approved verbs + WarningAction resilience
 .PARAMETER SkipConnection
     Usa sessao existente do Exchange/IPPS
 .PARAMETER SkipCapabilityCheck
@@ -92,10 +92,10 @@ $Script:TenantCaps = $null
 
 function Write-Banner {
     Write-Host ""
-    Write-Host "  ╔═══════════════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "  ║  REMEDIAÇÃO DE SEGURANÇA M365 / PURVIEW  v4.1    ║" -ForegroundColor Cyan
-    Write-Host "  ║  Com detecção de capacidades + Purview Evidence   ║" -ForegroundColor Cyan
-    Write-Host "  ╚═══════════════════════════════════════════════════╝" -ForegroundColor Cyan
+    Write-Host "  ╔═══════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+    Write-Host "  ║  REMEDIAÇÃO DE SEGURANÇA M365 / PURVIEW  v4.1.1      ║" -ForegroundColor Cyan
+    Write-Host "  ║  Com detecção de capacidades + Purview Evidence       ║" -ForegroundColor Cyan
+    Write-Host "  ╚═══════════════════════════════════════════════════════╝" -ForegroundColor Cyan
     Write-Host ""
 }
 
@@ -184,14 +184,14 @@ function Connect-ToServices {
     try { $null = Get-OrganizationConfig -ErrorAction Stop; Write-Status "Exchange Online - Conectado" "Success" }
     catch { Write-Status "Conectando ao Exchange Online..." "Action"; Connect-ExchangeOnline -ShowBanner:$false -ErrorAction Stop; Write-Status "Exchange Online - Conectado" "Success" }
     try { $null = Get-Label -ResultSize 1 -ErrorAction Stop 2>$null; Write-Status "Security & Compliance - Conectado" "Success" }
-    catch { Write-Status "Conectando ao Security & Compliance..." "Action"; Connect-IPPSSession -ShowBanner:$false -WarningAction SilentlyContinue -ErrorAction Stop; Write-Status "Security & Compliance - Conectado" "Success" }
+    catch { Write-Status "Conectando ao Security & Compliance..." "Action"; Connect-IPPSSession -ShowBanner:$false -ErrorAction Stop 3>$null; Write-Status "Security & Compliance - Conectado" "Success" }
 }
 
 # ============================================
 # 1. UNIFIED AUDIT LOG
 # ============================================
 
-function Remediate-UnifiedAuditLog {
+function Repair-UnifiedAuditLog {
     Write-Section "1️⃣" "UNIFIED AUDIT LOG"
     if (-not (Get-Command -Name Search-UnifiedAuditLog -ErrorAction SilentlyContinue)) {
         Write-Status "Cmdlets de Audit Log não disponíveis" "Skip"; Add-Skipped -Category "AuditLog" -Reason "Cmdlet indisponível"; Set-SectionStatus -Category "AuditLog" -Status "Skip" -Details "Cmdlet indisponível"; return
@@ -226,13 +226,13 @@ function Remediate-UnifiedAuditLog {
 # 2. POLÍTICAS DE RETENÇÃO
 # ============================================
 
-function Remediate-RetentionPolicies {
+function Repair-RetentionPolicies {
     Write-Section "2️⃣" "POLÍTICAS DE RETENÇÃO"
     if (-not (Test-CapabilityAvailable "Retention")) { Write-Status "Retention não disponível (licença)" "Skip"; Add-Skipped -Category "Retention" -Reason "Licença não inclui"; Set-SectionStatus -Category "Retention" -Status "Skip" -Details "Licença não inclui"; return }
     if (-not (Get-Command -Name New-RetentionCompliancePolicy -ErrorAction SilentlyContinue)) { Write-Status "Cmdlets de retenção não disponíveis" "Skip"; Add-Skipped -Category "Retention" -Reason "Cmdlet indisponível"; Set-SectionStatus -Category "Retention" -Status "Skip" -Details "Cmdlet indisponível"; return }
     $SectionHadError = $false
     try {
-        $ExistingPolicies = Get-RetentionCompliancePolicy -WarningAction SilentlyContinue -ErrorAction Stop
+        $ExistingPolicies = Get-RetentionCompliancePolicy -ErrorAction Stop 3>$null
         $PolicyCount = if ($ExistingPolicies) { @($ExistingPolicies).Count } else { 0 }
         Write-Status "Políticas de retenção existentes: $PolicyCount" "Info"; Save-Backup -Key "RetentionPoliciesCount" -Value $PolicyCount
 
@@ -282,7 +282,7 @@ function Remediate-RetentionPolicies {
 # 3. POLÍTICAS DLP
 # ============================================
 
-function Remediate-DLPPolicies {
+function Repair-DLPPolicies {
     Write-Section "3️⃣" "POLÍTICAS DLP"
     if (-not (Get-Command -Name New-DlpCompliancePolicy -ErrorAction SilentlyContinue)) { Write-Status "Cmdlets de DLP não disponíveis" "Skip"; Add-Skipped -Category "DLP" -Reason "Cmdlet indisponível"; Set-SectionStatus -Category "DLP" -Status "Skip" -Details "Cmdlet indisponível"; return }
     if (-not (Test-CapabilityAvailable "DLP")) { Write-Status "DLP não disponível (licença)" "Skip"; Add-Skipped -Category "DLP" -Reason "Licença não inclui DLP"; Set-SectionStatus -Category "DLP" -Status "Skip" -Details "Licença"; return }
@@ -290,7 +290,7 @@ function Remediate-DLPPolicies {
     if ($DLPAuditOnly) { $DLPMode = "TestWithNotifications"; $ModeDesc = "AUDITORIA"; $BlockAccess = $false; Write-Status "MODO: $ModeDesc" "Warning" }
     else { $DLPMode = "Enable"; $ModeDesc = "ATIVO (com bloqueio)"; $BlockAccess = $true; Write-Status "MODO: $ModeDesc" "Info" }
     try {
-        $ExistingDLP = Get-DlpCompliancePolicy -WarningAction SilentlyContinue -ErrorAction Stop
+        $ExistingDLP = Get-DlpCompliancePolicy -ErrorAction Stop 3>$null
         $DLPCount = if ($ExistingDLP) { @($ExistingDLP).Count } else { 0 }
         Write-Status "Políticas DLP existentes: $DLPCount" "Info"; Save-Backup -Key "DLPPoliciesCount" -Value $DLPCount
 
@@ -342,7 +342,7 @@ function Remediate-DLPPolicies {
 # 4. OWA - PROVEDORES EXTERNOS
 # ============================================
 
-function Remediate-OWAExternal {
+function Repair-OWAExternal {
     Write-Section "4️⃣" "OWA - PROVEDORES EXTERNOS"
     if (-not (Get-Command -Name Get-OwaMailboxPolicy -ErrorAction SilentlyContinue)) { Write-Status "Cmdlets do OWA não disponíveis" "Skip"; Add-Skipped -Category "OWA" -Reason "Cmdlet indisponível"; Set-SectionStatus -Category "OWA" -Status "Skip" -Details "Cmdlet indisponível"; return }
     if ($SkipOWABlock) { Write-Status "Bloqueio OWA - PULADO (-SkipOWABlock)" "Skip"; Set-SectionStatus -Category "OWA" -Status "Skip" -Details "-SkipOWABlock"; return }
@@ -362,7 +362,7 @@ function Remediate-OWAExternal {
 # 5. ALERTAS DE SEGURANÇA
 # ============================================
 
-function Remediate-AlertPolicies {
+function Repair-AlertPolicies {
     Write-Section "5️⃣" "ALERTAS DE SEGURANÇA"
     if (-not (Get-Command -Name New-ProtectionAlert -ErrorAction SilentlyContinue)) { Write-Status "Cmdlets de Alertas não disponíveis" "Skip"; Add-Skipped -Category "AlertPolicies" -Reason "Cmdlet indisponível"; Set-SectionStatus -Category "AlertPolicies" -Status "Skip" -Details "Cmdlet indisponível"; return }
     if (-not (Test-CapabilityAvailable "AlertPolicies")) { Write-Status "Alert Policies não disponível" "Skip"; Add-Skipped -Category "AlertPolicies" -Reason "Não disponível"; Set-SectionStatus -Category "AlertPolicies" -Status "Skip" -Details "Não disponível"; return }
@@ -405,7 +405,7 @@ function Export-PurviewEvidence {
     Write-Status "Coletando evidências de políticas implementadas..." "Info"
 
     # DLP
-    try { $dlp = Get-DlpCompliancePolicy -WarningAction SilentlyContinue -ErrorAction Stop; $enabled = @($dlp | Where-Object { $_.Enabled })
+    try { $dlp = Get-DlpCompliancePolicy -ErrorAction Stop 3>$null; $enabled = @($dlp | Where-Object { $_.Enabled })
         foreach ($p in $enabled) { [void]$Evidence.Add([PSCustomObject]@{ Category="DLP"; ActionName="DLP Policy: $($p.Name)"; Status="Enabled (Mode: $($p.Mode))"; PolicyName=$p.Name; PolicyId=$p.Guid; ImplementationDate=(Get-Date -Format "yyyy-MM-dd"); Notes="Workloads: $($p.Workload -join ', ') | Mode: $($p.Mode)"; PurviewMapping="Create DLP policies for sensitive information"; PurviewStatus="Implemented" }) }
         if ($enabled.Count -gt 0) { Write-Status "DLP: $($enabled.Count) políticas" "Success" }
     } catch { Write-Status "DLP não verificável" "Detail" }
@@ -418,7 +418,7 @@ function Export-PurviewEvidence {
     } catch { Write-Status "Labels não verificável" "Detail" }
 
     # Retention
-    try { $ret = Get-RetentionCompliancePolicy -WarningAction SilentlyContinue -ErrorAction Stop
+    try { $ret = Get-RetentionCompliancePolicy -ErrorAction Stop 3>$null
         foreach ($p in $ret) { [void]$Evidence.Add([PSCustomObject]@{ Category="Retention"; ActionName="Retention: $($p.Name)"; Status=$(if ($p.Enabled) {"Enabled"} else {"Disabled"}); PolicyName=$p.Name; PolicyId=$p.Guid; ImplementationDate=(Get-Date -Format "yyyy-MM-dd"); Notes="Workloads: $($p.Workload -join ', ') | Enabled: $($p.Enabled)"; PurviewMapping="Create retention policies"; PurviewStatus="Implemented" }) }
         if ($ret.Count -gt 0) { Write-Status "Retention: $($ret.Count) políticas" "Success" }
     } catch { Write-Status "Retention não verificável" "Detail" }
@@ -428,7 +428,7 @@ function Export-PurviewEvidence {
         [void]$Evidence.Add([PSCustomObject]@{ Category="Audit"; ActionName="Mailbox Audit by Default"; Status=$(if ($mbAudit) {"Enabled"} else {"Disabled"}); PolicyName="Organization Config"; PolicyId="AuditDisabled=$($org.AuditDisabled)"; ImplementationDate=(Get-Date -Format "yyyy-MM-dd"); Notes="AuditDisabled: $($org.AuditDisabled)"; PurviewMapping="Turn on auditing"; PurviewStatus="Implemented" })
         if ($mbAudit) { Write-Status "Audit: Mailbox Audit habilitado" "Success" }
     } catch { Write-Status "Audit não verificável" "Detail" }
-    try { $test = Search-UnifiedAuditLog -StartDate (Get-Date).AddDays(-7) -EndDate (Get-Date) -ResultSize 1 -ErrorAction Stop
+    try { $null = Search-UnifiedAuditLog -StartDate (Get-Date).AddDays(-7) -EndDate (Get-Date) -ResultSize 1 -ErrorAction Stop
         [void]$Evidence.Add([PSCustomObject]@{ Category="Audit"; ActionName="Unified Audit Log"; Status="Enabled & Active"; PolicyName="Unified Audit Log"; PolicyId="UAL-Active"; ImplementationDate=(Get-Date -Format "yyyy-MM-dd"); Notes="Audit Log is active with recent entries"; PurviewMapping="Turn on audit log search"; PurviewStatus="Implemented" })
         Write-Status "Audit: Unified Audit Log ativo" "Success"
     } catch { Write-Status "UAL não verificável" "Detail" }
@@ -495,8 +495,8 @@ function Show-Summary {
     Write-Host "  Unified Audit Log:     $AuditStatus" -ForegroundColor $(if ($AuditStatus -eq "ATIVO") { "Green" } else { "Yellow" })
     $MailboxAudit = (Get-OrganizationConfig).AuditDisabled; $MbStatus = if (-not $MailboxAudit) { "ATIVO" } else { "DESATIVADO" }
     Write-Host "  Mailbox Audit:         $MbStatus" -ForegroundColor $(if (-not $MailboxAudit) { "Green" } else { "Red" })
-    if ("Retention" -notin ($Script:SkippedItems.Category)) { $RetCount = @(Get-RetentionCompliancePolicy -WarningAction SilentlyContinue -ErrorAction SilentlyContinue).Count; Write-Host "  Políticas Retenção:    $RetCount políticas" -ForegroundColor $(if ($RetCount -ge 3) { "Green" } else { "Yellow" }) } else { Write-Host "  Políticas Retenção:    N/A (não licenciado)" -ForegroundColor DarkGray }
-    if ("DLP" -notin ($Script:SkippedItems.Category)) { $DLPPols = Get-DlpCompliancePolicy -WarningAction SilentlyContinue -ErrorAction SilentlyContinue; $DCount = if ($DLPPols) { @($DLPPols).Count } else { 0 }; $AuditCount = @($DLPPols | Where-Object { $_.Mode -eq "TestWithNotifications" }).Count; $DStatus = if ($AuditCount -gt 0) { "$DCount políticas ($AuditCount em auditoria)" } else { "$DCount políticas" }; Write-Host "  Políticas DLP:         $DStatus" -ForegroundColor $(if ($DCount -ge 3) { "Green" } else { "Yellow" }) } else { Write-Host "  Políticas DLP:         N/A (não licenciado)" -ForegroundColor DarkGray }
+    if ("Retention" -notin ($Script:SkippedItems.Category)) { $RetCount = @(Get-RetentionCompliancePolicy -ErrorAction SilentlyContinue 3>$null).Count; Write-Host "  Políticas Retenção:    $RetCount políticas" -ForegroundColor $(if ($RetCount -ge 3) { "Green" } else { "Yellow" }) } else { Write-Host "  Políticas Retenção:    N/A (não licenciado)" -ForegroundColor DarkGray }
+    if ("DLP" -notin ($Script:SkippedItems.Category)) { $DLPPols = Get-DlpCompliancePolicy -ErrorAction SilentlyContinue 3>$null; $DCount = if ($DLPPols) { @($DLPPols).Count } else { 0 }; $AuditCount = @($DLPPols | Where-Object { $_.Mode -eq "TestWithNotifications" }).Count; $DStatus = if ($AuditCount -gt 0) { "$DCount políticas ($AuditCount em auditoria)" } else { "$DCount políticas" }; Write-Host "  Políticas DLP:         $DStatus" -ForegroundColor $(if ($DCount -ge 3) { "Green" } else { "Yellow" }) } else { Write-Host "  Políticas DLP:         N/A (não licenciado)" -ForegroundColor DarkGray }
     $OwaExt = (Get-OwaMailboxPolicy -Identity "OwaMailboxPolicy-Default" -ErrorAction SilentlyContinue).WacExternalServicesEnabled; $OwaStatus = if (-not $OwaExt) { "BLOQUEADO" } else { "PERMITIDO" }
     Write-Host "  OWA Externos:          $OwaStatus" -ForegroundColor $(if (-not $OwaExt) { "Green" } else { "Yellow" })
     Write-Host ""
@@ -506,7 +506,7 @@ function Show-Summary {
     Write-Host "  Backup salvo em: $BackupPath" -ForegroundColor Gray; Write-Host ""
 }
 
-function Generate-HTMLReport {
+function New-HTMLReport {
     $TName = if ($Script:TenantCaps) { $Script:TenantCaps.TenantInfo.DisplayName } else { "N/A" }
     $LName = if ($Script:TenantCaps) { $Script:TenantCaps.License.Probable } else { "N/A" }
     $SectionsHtml = if ($Script:SectionStatus.Count -gt 0) { ($Script:SectionStatus.Values | ForEach-Object { $Class = switch -Regex ("$($_.Status)") { "^(OK|Success|Enabled)$" { "good"; break } "Warning" { "warn"; break } "Error" { "bad"; break } "Skip" { "na"; break } default { "" } }; "<tr class='$Class'><td>$([System.Net.WebUtility]::HtmlEncode($_.Category))</td><td>$([System.Net.WebUtility]::HtmlEncode($_.Status))</td><td>$([System.Net.WebUtility]::HtmlEncode($_.Details))</td></tr>" }) -join "" } else { "<tr><td colspan='3'>Sem dados</td></tr>" }
@@ -543,13 +543,13 @@ function Start-M365Remediation {
     if (-not $SkipCapabilityCheck) { $cap = Initialize-TenantCapabilities; if (-not $cap) { Write-Status "Executando sem detecção de capacidades" "Warning" } } else { Write-Status "Detecção de capacidades pulada" "Info" }
     $OnlyMode = ($OnlyRetention -or $OnlyDLP -or $OnlyAlerts)
     Write-Section "🚀" "INICIANDO VARREDURA/REMEDIAÇÃO"
-    if (-not $OnlyMode -or $OnlyRetention) { Remediate-RetentionPolicies }
-    if (-not $OnlyMode) { Remediate-UnifiedAuditLog }
-    if (-not $OnlyMode -or $OnlyDLP) { Remediate-DLPPolicies }
-    if (-not $OnlyMode) { Remediate-OWAExternal }
-    if (-not $OnlyMode -or $OnlyAlerts) { Remediate-AlertPolicies }
+    if (-not $OnlyMode -or $OnlyRetention) { Repair-RetentionPolicies }
+    if (-not $OnlyMode) { Repair-UnifiedAuditLog }
+    if (-not $OnlyMode -or $OnlyDLP) { Repair-DLPPolicies }
+    if (-not $OnlyMode) { Repair-OWAExternal }
+    if (-not $OnlyMode -or $OnlyAlerts) { Repair-AlertPolicies }
     if (-not $SkipPurviewEvidence) { Export-PurviewEvidence }
-    Show-Summary; Show-RollbackInstructions; Generate-HTMLReport
+    Show-Summary; Show-RollbackInstructions; New-HTMLReport
     Write-Host "  ✅ Remediação concluída!" -ForegroundColor Green; Write-Host ""
 }
 
