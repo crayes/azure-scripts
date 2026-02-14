@@ -43,8 +43,11 @@ Principais recursos:
 
 Veja [azure-scripts-ui/README.md](azure-scripts-ui/README.md) para instalação e uso.
 
-### ✨ Novidades v4.0
+### ✨ Novidades v4.1
 
+- **Audit-ImplementedPolicies.ps1** - Audita o que JÁ está implementado e gera evidências prontas para o Purview Compliance Manager
+- **Purview-Audit-PA-PS7.ps1** - Auditoria Purview + Power Platform DLP (macOS/Linux compatível)
+- **PURVIEW-COMPLIANCE-GUIDE.md** - Guia completo para aumentar o Compliance Score
 - **Detecção automática de licenças** - Scripts identificam E5/E3/Business Premium automaticamente
 - **Score inteligente** - Calculado apenas com recursos disponíveis na licença
 - **Zero erros de licença** - Pula automaticamente recursos não licenciados
@@ -64,6 +67,8 @@ Veja [azure-scripts-ui/README.md](azure-scripts-ui/README.md) para instalação 
 | **Análise de Conditional Access** | `Analyze-CA-Policies.ps1` |
 | **Troubleshooting erro 53003** | `Analyze-CA-Policies.ps1` |
 | **Verificar capacidades do tenant** | `Get-TenantCapabilities.ps1` |
+| **Aumentar Compliance Score** | `Audit-ImplementedPolicies.ps1` + `PURVIEW-COMPLIANCE-GUIDE.md` |
+| **Auditoria Purview + Power Platform** | `Purview-Audit-PA-PS7.ps1` |
 
 ---
 
@@ -102,6 +107,7 @@ Get-InstalledModule ExchangeOnlineManagement, Microsoft.Graph
 |--------|-----------------------------|
 | Exchange-Audit.ps1 | Global Reader, Exchange Administrator |
 | Purview-Audit-PS7.ps1 | Compliance Administrator |
+| Audit-ImplementedPolicies.ps1 | Compliance Admin + Policy.Read.All + Directory.Read.All |
 | M365-Remediation.ps1 | Exchange Administrator, Compliance Administrator |
 | Clean-InboxRules.ps1 | Exchange Administrator |
 | Remove-InactiveDevices.ps1 | Cloud Device Administrator |
@@ -281,7 +287,63 @@ Disconnect-ExchangeOnline -Confirm:$false
 
 ### 🛡️ Microsoft Purview
 
-#### `Purview-Audit-PS7.ps1` (v4.0) ⭐ ATUALIZADO
+#### `Audit-ImplementedPolicies.ps1` (v1.0) ⭐ NOVO
+Audita todas as políticas JÁ implementadas no tenant e gera evidências prontas para copiar/colar no **Purview Compliance Manager**:
+
+- Conditional Access (MFA, Legacy Auth Block, Geo-Block, Compliant Device)
+- DLP Policies
+- Sensitivity Labels e Label Policies
+- Retention Policies
+- Safe Links / Safe Attachments / Anti-Phishing
+- Audit Log & Mailbox Audit
+- Transport Rules (Mail Flow)
+- DKIM Signing
+
+**Problema que resolve:** Você implementou políticas mas o Purview Score continua 0% porque o Purview **não detecta automaticamente**.
+
+```powershell
+# Auditoria completa
+pwsh ./scripts/Purview/Audit-ImplementedPolicies.ps1 -TenantName "MeuCliente"
+
+# Se já estiver conectado
+pwsh ./scripts/Purview/Audit-ImplementedPolicies.ps1 -TenantName "MeuCliente" -SkipConnection
+
+# Multi-tenant
+foreach ($cliente in @("RFAA", "ClienteB", "ClienteC")) {
+    ./scripts/Purview/Audit-ImplementedPolicies.ps1 -TenantName $cliente
+}
+```
+
+**Saída:**
+- `purview-evidence.csv` - Evidências prontas para o Purview
+- `purview-evidence.json` - Dados estruturados
+- `EVIDENCE-REPORT.md` - Relatório markdown
+
+Veja o [PURVIEW-COMPLIANCE-GUIDE.md](scripts/Purview/PURVIEW-COMPLIANCE-GUIDE.md) para o workflow completo.
+
+---
+
+#### `Purview-Audit-PA-PS7.ps1` (v4.1) ⭐ NOVO
+Versão estendida do Purview-Audit com **auditoria de DLP do Power Platform** (Power Automate/Power Apps):
+
+- Tudo do Purview-Audit-PS7.ps1 +
+- Ambientes Power Platform
+- Políticas DLP do Power Platform
+- Conectores de alto risco
+- Compatível com macOS/Linux via PAC CLI
+
+```powershell
+# Execução padrão
+pwsh ./scripts/Purview/Purview-Audit-PA-PS7.ps1
+
+# macOS/Linux (requer PAC CLI)
+dotnet tool install -g Microsoft.PowerApps.CLI.Tool
+pwsh ./scripts/Purview/Purview-Audit-PA-PS7.ps1
+```
+
+---
+
+#### `Purview-Audit-PS7.ps1` (v4.0)
 Auditoria abrangente do Microsoft Purview com **detecção automática de capacidades**:
 
 - Políticas DLP
@@ -653,7 +715,14 @@ Contribuições são bem-vindas! Por favor:
 
 ## 📝 Changelog
 
-### v4.0 - Janeiro 2026 ⭐ ATUAL
+### v4.1 - Fevereiro 2026 ⭐ ATUAL
+- ✨ **Novo:** `Audit-ImplementedPolicies.ps1` - Audita políticas já implementadas para Purview Compliance Manager
+- ✨ **Novo:** `Purview-Audit-PA-PS7.ps1` - Auditoria Purview + Power Platform DLP
+- ✨ **Novo:** `PURVIEW-COMPLIANCE-GUIDE.md` - Guia para aumentar Compliance Score
+- 🔧 Todos os scripts agora multi-tenant (sem branding hardcoded)
+- 📋 README completamente atualizado
+
+### v4.0 - Janeiro 2026
 - ✨ **Novo:** `Get-TenantCapabilities.ps1` - Detecta licenças e capacidades automaticamente
 - ✨ **Novo:** `M365-TenantCapabilities.psm1` - Módulo importável
 - 🔧 **Atualizado:** `Purview-Audit-PS7.ps1` v4.0 - Integração com detecção de capacidades
