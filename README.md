@@ -43,8 +43,12 @@ Principais recursos:
 
 Veja [azure-scripts-ui/README.md](azure-scripts-ui/README.md) para instalação e uso.
 
-### ✨ Novidades v4.1
+### ✨ Novidades v4.1.1
 
+- **M365-Remediation.ps1 v4.1.1** - Integração com Purview Compliance Manager: gera evidências (CSV/JSON/MD) automaticamente após remediação
+- **Parâmetros novos:** `-TenantName`, `-SkipPurviewEvidence`, `-DryRun` (substituiu `-WhatIf`)
+- **Fix:** Funções renomeadas para verbos aprovados pelo PowerShell (zero warnings no PSScriptAnalyzer)
+- **Fix:** `-WarningAction SilentlyContinue` substituído por `3>$null` (imune a `$WarningPreference` corrompida)
 - **Audit-ImplementedPolicies.ps1** - Audita o que JÁ está implementado e gera evidências prontas para o Purview Compliance Manager
 - **Purview-Audit-PA-PS7.ps1** - Auditoria Purview + Power Platform DLP (macOS/Linux compatível)
 - **PURVIEW-COMPLIANCE-GUIDE.md** - Guia completo para aumentar o Compliance Score
@@ -67,7 +71,7 @@ Veja [azure-scripts-ui/README.md](azure-scripts-ui/README.md) para instalação 
 | **Análise de Conditional Access** | `Analyze-CA-Policies.ps1` |
 | **Troubleshooting erro 53003** | `Analyze-CA-Policies.ps1` |
 | **Verificar capacidades do tenant** | `Get-TenantCapabilities.ps1` |
-| **Aumentar Compliance Score** | `Audit-ImplementedPolicies.ps1` + `PURVIEW-COMPLIANCE-GUIDE.md` |
+| **Aumentar Compliance Score** | `M365-Remediation.ps1 -TenantName "X"` (gera evidências automaticamente) |
 | **Auditoria Purview + Power Platform** | `Purview-Audit-PA-PS7.ps1` |
 
 ---
@@ -99,6 +103,8 @@ Install-Module -Name Microsoft.Graph -Force -AllowClobber
 Get-InstalledModule ExchangeOnlineManagement, Microsoft.Graph
 ```
 
+> **⚠️ Nota macOS/Linux:** Carregar EXO **antes** do Graph para evitar conflito MSAL. Use `pwsh -NoProfile` se necessário.
+
 > **💡 Nota:** O script `OneDrive-Complete-Audit.ps1` usa REST API pura e **não requer módulos adicionais**.
 
 ### Permissões Necessárias
@@ -108,7 +114,7 @@ Get-InstalledModule ExchangeOnlineManagement, Microsoft.Graph
 | Exchange-Audit.ps1 | Global Reader, Exchange Administrator |
 | Purview-Audit-PS7.ps1 | Compliance Administrator |
 | Audit-ImplementedPolicies.ps1 | Compliance Admin + Policy.Read.All + Directory.Read.All |
-| M365-Remediation.ps1 | Exchange Administrator, Compliance Administrator |
+| M365-Remediation.ps1 | Exchange Admin, Compliance Admin (+ Policy.Read.All para evidências CA) |
 | Clean-InboxRules.ps1 | Exchange Administrator |
 | Remove-InactiveDevices.ps1 | Cloud Device Administrator |
 | Rotate-KerberosKey-SSO.ps1 | Global Admin ou Hybrid Identity Admin + Domain Admin local |
@@ -147,7 +153,7 @@ Detecta automaticamente as capacidades e licenças disponíveis no tenant:
 - Identifica licença (E5, E3, Business Premium, Basic)
 - Testa disponibilidade de cada recurso de compliance
 - Retorna lista de itens auditáveis e remediáveis
-- Usado automaticamente pelos scripts v4.0
+- Usado automaticamente pelos scripts v4.0+
 
 ```powershell
 # Uso standalone
@@ -287,7 +293,7 @@ Disconnect-ExchangeOnline -Confirm:$false
 
 ### 🛡️ Microsoft Purview
 
-#### `Audit-ImplementedPolicies.ps1` (v1.0) ⭐ NOVO
+#### `Audit-ImplementedPolicies.ps1` (v1.0)
 Audita todas as políticas JÁ implementadas no tenant e gera evidências prontas para copiar/colar no **Purview Compliance Manager**:
 
 - Conditional Access (MFA, Legacy Auth Block, Geo-Block, Compliant Device)
@@ -299,7 +305,7 @@ Audita todas as políticas JÁ implementadas no tenant e gera evidências pronta
 - Transport Rules (Mail Flow)
 - DKIM Signing
 
-**Problema que resolve:** Você implementou políticas mas o Purview Score continua 0% porque o Purview **não detecta automaticamente**.
+> **💡 Nota:** A funcionalidade de geração de evidências agora também está integrada no `M365-Remediation.ps1` v4.1.1 (via `Export-PurviewEvidence`). Use o `Audit-ImplementedPolicies.ps1` para auditoria standalone, ou rode `M365-Remediation.ps1 -TenantName "X"` para remediar + gerar evidências em um único passo.
 
 ```powershell
 # Auditoria completa
@@ -323,7 +329,7 @@ Veja o [PURVIEW-COMPLIANCE-GUIDE.md](scripts/Purview/PURVIEW-COMPLIANCE-GUIDE.md
 
 ---
 
-#### `Purview-Audit-PA-PS7.ps1` (v4.1) ⭐ NOVO
+#### `Purview-Audit-PA-PS7.ps1` (v4.1)
 Versão estendida do Purview-Audit com **auditoria de DLP do Power Platform** (Power Automate/Power Apps):
 
 - Tudo do Purview-Audit-PS7.ps1 +
@@ -401,8 +407,8 @@ Auditoria abrangente do Microsoft Purview com **detecção automática de capaci
 
 ### 🔧 Remediação
 
-#### `M365-Remediation.ps1` (v4.0) ⭐ ATUALIZADO
-Aplica configurações de segurança recomendadas com **detecção automática de capacidades**:
+#### `M365-Remediation.ps1` (v4.1.1) ⭐ ATUALIZADO
+Aplica configurações de segurança recomendadas com **detecção automática de capacidades** e **geração de evidências para o Purview Compliance Manager**:
 
 - ✅ Ativa Unified Audit Log
 - ✅ Configura Mailbox Audit
@@ -410,25 +416,30 @@ Aplica configurações de segurança recomendadas com **detecção automática d
 - ✅ Cria políticas DLP para dados brasileiros (CPF, CNPJ) (se licenciado)
 - ✅ Desabilita provedores externos no OWA (opcional)
 - ✅ Configura alertas de segurança (básicos ou avançados conforme licença)
+- ✅ **Gera evidências Purview** (DLP, Labels, Retention, Audit, ATP, Transport Rules, DKIM, CA)
+
+**Novidades v4.1.1:**
+- ✅ **Purview Evidence integrado** - Coleta evidências de todas as políticas implementadas e gera CSV/JSON/Markdown
+- ✅ **Parâmetro `-TenantName`** - Identificação nos relatórios de evidência
+- ✅ **Parâmetro `-DryRun`** - Modo simulação (substituiu `-WhatIf`)
+- ✅ **Parâmetro `-SkipPurviewEvidence`** - Pula geração de evidências
+- ✅ **Verbos aprovados** - Zero warnings no PSScriptAnalyzer
+- ✅ **Resiliente a `$WarningPreference`** - Usa `3>$null` em vez de `-WarningAction`
 
 **Novidades v4.0:**
 - ✅ **Detecção automática de licença** - Não tenta criar DLP em tenant sem licença
 - ✅ **Alertas adaptativos** - Usa `AggregationType=None` (básico) ou `SimpleAggregation` (E5)
-- ✅ **Sem erros de licença** - Pula remediações não disponíveis
-- ✅ **Relatório claro** - Mostra o que foi remediado vs pulado
-- ✅ Integração com `Get-TenantCapabilities.ps1`
-- ✅ **Bypass por módulo/cmdlet** - Se o módulo não estiver disponível, registra no relatório
 - ✅ **Relatório HTML** - Gera relatório final em HTML
 
 ```powershell
-# Execução padrão (detecta capacidades automaticamente)
-./scripts/Remediation/M365-Remediation.ps1
+# Execução padrão (remediação + evidências Purview)
+./scripts/Remediation/M365-Remediation.ps1 -TenantName "RFAA"
 
 # Se já estiver conectado
-./scripts/Remediation/M365-Remediation.ps1 -SkipConnection
+./scripts/Remediation/M365-Remediation.ps1 -SkipConnection -TenantName "RFAA"
 
 # DLP em modo auditoria (não bloqueia, só reporta)
-./scripts/Remediation/M365-Remediation.ps1 -DLPAuditOnly
+./scripts/Remediation/M365-Remediation.ps1 -DLPAuditOnly -TenantName "RFAA"
 
 # Pular alerta de forwarding (pode gerar falsos positivos)
 ./scripts/Remediation/M365-Remediation.ps1 -SkipForwardingAlert
@@ -437,32 +448,25 @@ Aplica configurações de segurança recomendadas com **detecção automática d
 ./scripts/Remediation/M365-Remediation.ps1 -SkipOWABlock
 
 # Modo simulação (não faz alterações)
-./scripts/Remediation/M365-Remediation.ps1 -WhatIf
+./scripts/Remediation/M365-Remediation.ps1 -DryRun -TenantName "RFAA"
+
+# Pular geração de evidências Purview
+./scripts/Remediation/M365-Remediation.ps1 -SkipPurviewEvidence
 
 # Combinado
-./scripts/Remediation/M365-Remediation.ps1 -SkipConnection -DLPAuditOnly -SkipForwardingAlert
+./scripts/Remediation/M365-Remediation.ps1 -SkipConnection -DLPAuditOnly -SkipForwardingAlert -TenantName "RFAA"
 ```
 
-**Output v4.0 em tenant sem E5:**
-```
-═══════════════════════════════════════════════════════════════════
-  🔍  DETECTANDO CAPACIDADES DO TENANT
-═══════════════════════════════════════════════════════════════════
-  ✅ Tenant: ATSI Tecnologia
-  📋 Licença: Microsoft 365 Business Premium
-  📋 Pode remediar: AuditLog, Retention, AlertPolicies (básicos)
-
-═══════════════════════════════════════════════════════════════════
-  3️⃣  POLÍTICAS DLP
-═══════════════════════════════════════════════════════════════════
-  ⏭️  DLP não disponível neste tenant (licença não inclui)
-```
+**Saída:**
+- `M365-Remediation-Backup_<timestamp>.json` - Backup das configurações alteradas
+- `M365-Remediation-Report_<timestamp>.html` - Relatório visual com status, itens pulados e alterações
+- `Purview-Evidence_<TenantName>_<timestamp>/purview-evidence.csv` - Evidências para Purview
+- `Purview-Evidence_<TenantName>_<timestamp>/purview-evidence.json` - Dados estruturados
+- `Purview-Evidence_<TenantName>_<timestamp>/EVIDENCE-REPORT.md` - Relatório markdown
 
 **⚠️ Importante:** Execute sempre a auditoria antes da remediação!
 
-**Saída adicional (v4.0+):**
-- `M365-Remediation-Backup_<timestamp>.json` - Backup das configurações alteradas
-- `M365-Remediation-Report_<timestamp>.html` - Relatório visual com status, itens pulados e alterações
+> **💡 Dica macOS/Linux:** Use `pwsh -NoProfile` para evitar conflito MSAL entre EXO e Graph. Carregue EXO antes do Graph.
 
 ---
 
@@ -575,14 +579,15 @@ chmod +x ./scripts/DNS/check-dns.sh
 ### Primeira Execução em Novo Tenant
 
 ```powershell
-# 1. Conectar aos serviços
+# 1. Conectar aos serviços (carregar EXO ANTES do Graph em macOS)
 Connect-ExchangeOnline
 Connect-IPPSSession
 
-# 2. Verificar capacidades do tenant (opcional, v4.0 faz automaticamente)
+# 2. Verificar capacidades do tenant (opcional, v4.0+ faz automaticamente)
 ./scripts/Modules/Get-TenantCapabilities.ps1
 
 # 3. Analisar políticas de Conditional Access
+Connect-MgGraph -Scopes "Policy.Read.All"
 ./scripts/EntraID/Analyze-CA-Policies.ps1 -TenantId "contoso.onmicrosoft.com"
 
 # 4. Auditoria OneDrive/SharePoint
@@ -596,27 +601,30 @@ Connect-IPPSSession
 
 # 7. Revisar relatórios gerados
 
-# 8. Aplicar remediações (v4.0 - adapta à licença)
-./scripts/Remediation/M365-Remediation.ps1 -SkipConnection
+# 8. Aplicar remediações + gerar evidências Purview
+./scripts/Remediation/M365-Remediation.ps1 -SkipConnection -TenantName "contoso"
 
 # 9. Aplicar remediações do OneDrive (manual)
 # Seguir REMEDIATION-CHECKLIST.md no SharePoint Admin Center
 
-# 10. Desconectar
+# 10. Ativar auto-testing no Purview Compliance Manager
+# https://compliance.microsoft.com → Settings → Compliance Manager → Testing source
+
+# 11. Desconectar
 Disconnect-ExchangeOnline -Confirm:$false
+Disconnect-MgGraph
 ```
 
 ### Tenant com Licença Limitada (E3/Business)
 
 ```powershell
-# Os scripts v4.0 detectam automaticamente e pulam recursos não licenciados
+# Os scripts v4.0+ detectam automaticamente e pulam recursos não licenciados
 ./scripts/Purview/Purview-Audit-PS7.ps1 -SkipConnection
-# Output: DLP, InsiderRisk → "N/A (não licenciado)"
+# Output: InsiderRisk → "N/A (não licenciado)"
 # Score calculado apenas com recursos disponíveis
 
-./scripts/Remediation/M365-Remediation.ps1 -SkipConnection
-# Output: "⏭️ DLP não disponível neste tenant (licença não inclui)"
-# Cria apenas recursos disponíveis (Retention, Alertas básicos)
+./scripts/Remediation/M365-Remediation.ps1 -SkipConnection -TenantName "MeuTenant"
+# Output: Cria recursos disponíveis + gera evidências Purview
 ```
 
 ### Troubleshooting Erro 53003 (BlockedByConditionalAccess)
@@ -653,7 +661,7 @@ Disconnect-ExchangeOnline -Confirm:$false
            │                    │                    │
            ▼                    ▼                    ▼
     Exchange-Audit      Revisar JSON/CSV     M365-Remediation
-    Purview-Audit v4.0  Priorizar issues     (adapta à licença)
+    Purview-Audit v4.0  Priorizar issues     + Purview Evidence
     OneDrive-Audit      Documentar gaps      SPO Admin Center
     CA-Policies-Audit   Analyze-CA output    Remove-Devices
     TenantCapabilities                       
@@ -670,7 +678,7 @@ Disconnect-ExchangeOnline -Confirm:$false
 
 ## 📜 Licenças Microsoft Necessárias
 
-### Compatibilidade dos Scripts v4.0
+### Compatibilidade dos Scripts v4.0+
 
 | Recurso | E5 | E3 | Business Premium | Basic |
 |---------|:--:|:--:|:----------------:|:-----:|
@@ -685,15 +693,16 @@ Disconnect-ExchangeOnline -Confirm:$false
 | Communication Compliance | ✅ | ❌ | ❌ | ❌ |
 | eDiscovery Premium | ✅ | ❌ | ❌ | ❌ |
 | eDiscovery Standard | ✅ | ✅ | ❌ | ❌ |
+| **Purview Evidence (M365-Remediation)** | ✅ | ✅ | ✅ | ⚠️ |
 
-> **💡 Nota:** Os scripts v4.0 detectam automaticamente a licença e pulam recursos não disponíveis.
+> **💡 Nota:** Os scripts v4.0+ detectam automaticamente a licença e pulam recursos não disponíveis.
 
 ### Permissões por Script
 
 | Script | Permissões Necessárias |
 |--------|-----------------------|
 | Purview-Audit-PS7.ps1 | Compliance Administrator |
-| M365-Remediation.ps1 | Exchange Admin + Compliance Admin |
+| M365-Remediation.ps1 | Exchange Admin + Compliance Admin (+ Policy.Read.All para CA evidence) |
 | Get-TenantCapabilities.ps1 | Compliance Reader ou superior |
 | Exchange-Audit.ps1 | Global Reader, Exchange Administrator |
 | OneDrive-Complete-Audit.ps1 | SharePoint Administrator |
@@ -715,10 +724,19 @@ Contribuições são bem-vindas! Por favor:
 
 ## 📝 Changelog
 
-### v4.1 - Fevereiro 2026 ⭐ ATUAL
+### v4.1.1 - Fevereiro 2026 ⭐ ATUAL
+- 🔧 **Fix:** Funções renomeadas para verbos aprovados (Remediate-* → Repair-*, Generate-HTMLReport → New-HTMLReport)
+- 🔧 **Fix:** `-WarningAction SilentlyContinue` → `3>$null` (previne crash de ActionPreference)
+- 🔧 **Fix:** `-WhatIf` renomeado para `-DryRun` (evita conflito com SupportsShouldProcess)
+- 📋 Zero warnings no PSScriptAnalyzer
+
+### v4.1 - Fevereiro 2026
+- ✨ **Novo:** `Export-PurviewEvidence` integrado no `M365-Remediation.ps1` - Gera evidências CSV/JSON/MD após remediação
+- ✨ **Novo:** Parâmetros `-TenantName`, `-SkipPurviewEvidence`, `-DryRun`
 - ✨ **Novo:** `Audit-ImplementedPolicies.ps1` - Audita políticas já implementadas para Purview Compliance Manager
 - ✨ **Novo:** `Purview-Audit-PA-PS7.ps1` - Auditoria Purview + Power Platform DLP
 - ✨ **Novo:** `PURVIEW-COMPLIANCE-GUIDE.md` - Guia para aumentar Compliance Score
+- 🗑️ **Removido:** `Update-PurviewComplianceActions.ps1` (funcionalidade integrada no M365-Remediation + auto-testing Purview)
 - 🔧 Todos os scripts agora multi-tenant (sem branding hardcoded)
 - 📋 README completamente atualizado
 
