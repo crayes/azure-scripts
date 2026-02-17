@@ -1,6 +1,6 @@
 # 🛡️ Relatório de Auditoria Purview
 
-**Data:** 14/02/2026 13:33
+**Data:** 16/02/2026 22:41
 **Tenant:** Rayes Fagundes Advogados Associados
 **Licença Detectada:** Microsoft 365 E3 / Business Premium
 
