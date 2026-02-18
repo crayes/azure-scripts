@@ -1,2 +1,0 @@
-"Categoria","Prioridade","Mensagem","Remediacao"
-"DLP","High","Workloads sem proteção DLP: Exchange, SharePoint, OneDriveForBusiness, Teams","Crie políticas DLP que incluam esses workloads"
