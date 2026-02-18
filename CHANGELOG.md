@@ -2,6 +2,26 @@
 
 Todas as mudanças relevantes do projeto serão documentadas aqui.
 
+## [4.2] - 2026-02-18
+
+### Added
+- **M365-Remediation.ps1 v4.2** - DLP Workload Coverage Repair
+  - Nova função `Repair-DLPWorkloadCoverage` que verifica e corrige automaticamente políticas DLP com workloads faltantes
+  - Análise granular de cobertura por workload (Exchange, SharePoint, OneDrive, Teams)
+  - Usa `Set-DlpCompliancePolicy` para adicionar locations faltantes
+  - Compatível com modo `-DryRun` para simulação
+  - Integração com `Export-PurviewEvidence` para documentar correções
+- **Purview-Audit-PS7.ps1 v4.1** - Análise granular de cobertura DLP por workload
+  - Distingue políticas custom vs default/sistema
+  - Verifica ExchangeLocation/SharePointLocation/OneDriveLocation/TeamsLocation em cada política
+  - Score DLP não penaliza quando políticas custom cobrem todos os workloads
+  - Detalhe por workload mostrando quais políticas cobrem cada um
+  - Recomendação aponta para `M365-Remediation.ps1 -OnlyDLP` quando há gaps
+
+### Changed
+- Melhorias na detecção de políticas DLP com cobertura incompleta
+- Análise de DLP diferencia políticas custom vs default/sistema
+
 ## [4.1.1] - 2026-02-14
 
 ### Fixed
