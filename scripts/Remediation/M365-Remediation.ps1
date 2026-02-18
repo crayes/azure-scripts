@@ -2,7 +2,13 @@
 .SYNOPSIS
     Remediação de Segurança Microsoft 365 / Purview
 .DESCRIPTION
-    Versão 4.1.1 - Fix: approved verbs + WarningAction resilience
+    Versão 4.2 - DLP Workload Coverage Repair + Audit granular
+    
+    NOVIDADES v4.2:
+    - Verificação automática de workloads em políticas DLP existentes
+    - Repara políticas que perderam cobertura de Exchange/SharePoint/OneDrive/Teams
+    - Função Repair-DLPWorkloadCoverage usa Set-DlpCompliancePolicy para adicionar locations faltantes
+    - Compatível com -DryRun para simulação
     
     NOVIDADES v4.1:
     - Geração automática de evidências para o Purview Compliance Manager
@@ -29,7 +35,7 @@
 .AUTHOR
     M365 Security Toolkit - RFAA
 .VERSION
-    4.1.1 - Fevereiro 2026 - Fix: approved verbs + WarningAction resilience
+    4.2 - Fevereiro 2026 - DLP Workload Coverage Repair
 .PARAMETER SkipConnection
     Usa sessao existente do Exchange/IPPS
 .PARAMETER SkipCapabilityCheck
@@ -93,8 +99,8 @@ $Script:TenantCaps = $null
 function Write-Banner {
     Write-Host ""
     Write-Host "  ╔═══════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "  ║  REMEDIAÇÃO DE SEGURANÇA M365 / PURVIEW  v4.1.1      ║" -ForegroundColor Cyan
-    Write-Host "  ║  Com detecção de capacidades + Purview Evidence       ║" -ForegroundColor Cyan
+    Write-Host "  ║  REMEDIAÇÃO DE SEGURANÇA M365 / PURVIEW  v4.2        ║" -ForegroundColor Cyan
+    Write-Host "  ║  DLP Workload Repair + Purview Evidence               ║" -ForegroundColor Cyan
     Write-Host "  ╚═══════════════════════════════════════════════════════╝" -ForegroundColor Cyan
     Write-Host ""
 }
@@ -294,6 +300,50 @@ function Repair-DLPPolicies {
         $DLPCount = if ($ExistingDLP) { @($ExistingDLP).Count } else { 0 }
         Write-Status "Políticas DLP existentes: $DLPCount" "Info"; Save-Backup -Key "DLPPoliciesCount" -Value $DLPCount
 
+        # ── Função auxiliar: Verificar e reparar workloads de política existente ──
+        function Repair-DLPWorkloadCoverage {
+            param(
+                [string]$PolicyName,
+                [object]$PolicyObj
+            )
+            $RequiredLocations = @(
+                @{ Name = "Exchange";            Param = "ExchangeLocation";  Property = "ExchangeLocation" },
+                @{ Name = "SharePoint";          Param = "SharePointLocation"; Property = "SharePointLocation" },
+                @{ Name = "OneDrive";            Param = "OneDriveLocation";   Property = "OneDriveLocation" },
+                @{ Name = "Teams";               Param = "TeamsLocation";      Property = "TeamsLocation" }
+            )
+            $MissingLocations = @()
+            foreach ($Loc in $RequiredLocations) {
+                $CurrentValue = $PolicyObj.($Loc.Property)
+                if (-not $CurrentValue -or @($CurrentValue).Count -eq 0) {
+                    $MissingLocations += $Loc
+                }
+            }
+            if ($MissingLocations.Count -gt 0) {
+                $MissingNames = $MissingLocations | ForEach-Object { $_.Name }
+                Write-Status "$PolicyName - Workloads faltando: $($MissingNames -join ', ')" "Warning"
+                Write-Status "Adicionando workloads..." "Action"
+                if (-not $DryRun) {
+                    try {
+                        $SetParams = @{ Identity = $PolicyName }
+                        foreach ($Loc in $MissingLocations) {
+                            $SetParams[$Loc.Param] = "All"
+                        }
+                        Set-DlpCompliancePolicy @SetParams -ErrorAction Stop
+                        Write-Status "$PolicyName - Workloads adicionados: $($MissingNames -join ', ')" "Success"
+                        Add-Change -Category "DLP" -Action "Add Workloads" -Details "$PolicyName += $($MissingNames -join ', ')"
+                    } catch {
+                        Write-Status "Erro ao adicionar workloads: $($_.Exception.Message)" "Error"
+                        $script:SectionHadError = $true
+                    }
+                } else {
+                    Write-Status "[DryRun] Adicionaria workloads ($($MissingNames -join ', ')) em $PolicyName" "Skip"
+                }
+            } else {
+                Write-Status "$PolicyName - Todos os workloads cobertos" "Detail"
+            }
+        }
+
         # CPF
         $CPFPolicyName = "DLP - Protecao CPF Brasileiro"
         if (-not ($ExistingDLP | Where-Object { $_.Name -eq $CPFPolicyName })) {
@@ -304,7 +354,10 @@ function Repair-DLPPolicies {
                     Write-Status "$CPFPolicyName - CRIADA" "Success"; Add-Change -Category "DLP" -Action "Create Policy" -Details "$CPFPolicyName (Mode: $DLPMode)"
                 } catch { Write-Status "Erro: $($_.Exception.Message)" "Error"; $SectionHadError = $true }
             } else { Write-Status "[DryRun] Criaria - $CPFPolicyName" "Skip" }
-        } else { Write-Status "$CPFPolicyName - Já existe (Mode: $($ExistingDLP | Where-Object {$_.Name -eq $CPFPolicyName} | Select-Object -ExpandProperty Mode))" "Success" }
+        } else {
+            Write-Status "$CPFPolicyName - Já existe (Mode: $($ExistingDLP | Where-Object {$_.Name -eq $CPFPolicyName} | Select-Object -ExpandProperty Mode))" "Success"
+            Repair-DLPWorkloadCoverage -PolicyName $CPFPolicyName -PolicyObj ($ExistingDLP | Where-Object { $_.Name -eq $CPFPolicyName })
+        }
 
         # CNPJ
         $CNPJPolicyName = "DLP - Protecao CNPJ"
@@ -316,7 +369,10 @@ function Repair-DLPPolicies {
                     Write-Status "$CNPJPolicyName - CRIADA" "Success"; Add-Change -Category "DLP" -Action "Create Policy" -Details $CNPJPolicyName
                 } catch { Write-Status "Erro: $($_.Exception.Message)" "Error"; $SectionHadError = $true }
             } else { Write-Status "[DryRun] Criaria - $CNPJPolicyName" "Skip" }
-        } else { Write-Status "$CNPJPolicyName - Já existe" "Success" }
+        } else {
+            Write-Status "$CNPJPolicyName - Já existe" "Success"
+            Repair-DLPWorkloadCoverage -PolicyName $CNPJPolicyName -PolicyObj ($ExistingDLP | Where-Object { $_.Name -eq $CNPJPolicyName })
+        }
 
         # Cartão de Crédito
         $CCPolicyName = "DLP - Protecao Cartao de Credito"
@@ -328,7 +384,10 @@ function Repair-DLPPolicies {
                     Write-Status "$CCPolicyName - CRIADA" "Success"; Add-Change -Category "DLP" -Action "Create Policy" -Details $CCPolicyName
                 } catch { Write-Status "Erro: $($_.Exception.Message)" "Error"; $SectionHadError = $true }
             } else { Write-Status "[DryRun] Criaria - $CCPolicyName" "Skip" }
-        } else { Write-Status "$CCPolicyName - Já existe" "Success" }
+        } else {
+            Write-Status "$CCPolicyName - Já existe" "Success"
+            Repair-DLPWorkloadCoverage -PolicyName $CCPolicyName -PolicyObj ($ExistingDLP | Where-Object { $_.Name -eq $CCPolicyName })
+        }
 
         Write-Host ""; Write-Status "Para ver relatórios DLP: https://compliance.microsoft.com/datalossprevention" "Info"
     } catch {

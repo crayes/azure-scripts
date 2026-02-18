@@ -7,7 +7,14 @@
 .SYNOPSIS
     Script de Auditoria Completa do Microsoft Purview
 .DESCRIPTION
-    Versão 4.0 - Integrado com Get-TenantCapabilities.ps1
+    Versão 4.1 - Análise granular de cobertura DLP por workload
+    
+    NOVIDADES v4.1:
+    - Análise granular de cobertura DLP: distingue políticas custom vs default/sistema
+    - Verifica ExchangeLocation/SharePointLocation/OneDriveLocation/TeamsLocation
+    - Score DLP não penaliza quando políticas custom cobrem todos os workloads
+    - Detalhe por workload mostrando quais políticas cobrem cada um
+    - Recomendação aponta para M365-Remediation.ps1 -OnlyDLP
     
     NOVIDADES v4.0:
     - Detecção automática de capacidades/licenças do tenant
@@ -29,7 +36,7 @@
 .AUTHOR
     M365 Security Toolkit - RFAA
 .VERSION
-    4.0 - Janeiro 2026 - Integração com TenantCapabilities
+    4.1 - Fevereiro 2026 - Análise granular DLP workload coverage
 .EXAMPLE
     ./Purview-Audit-PS7.ps1
     ./Purview-Audit-PS7.ps1 -OutputPath "./MeuRelatorio" -IncludeDetails
@@ -56,7 +63,7 @@ $OutputFolder = "${OutputPath}_${ReportDate}"
 # ============================================
 
 $Script:Config = @{
-    Version = "4.0"
+    Version = "4.1"
     MinDLPPolicies = 3
     MinRetentionPolicies = 2
     MinSensitivityLabels = 5
@@ -94,7 +101,7 @@ function Write-Banner {
 ║   ██║     ╚██████╔╝██║  ██║ ╚████╔╝ ██║███████╗╚███╔███╔╝                ║
 ║   ╚═╝      ╚═════╝ ╚═╝  ╚═╝  ╚═══╝  ╚═╝╚══════╝ ╚══╝╚══╝                 ║
 ║   🛡️  AUDITORIA COMPLETA DE SEGURANÇA E COMPLIANCE                        ║
-║   Versão 4.0 - Janeiro 2026 (com detecção de capacidades)                ║
+║   Versão 4.1 - Fevereiro 2026 (análise granular DLP + capacidades)       ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 
 "@
@@ -318,12 +325,89 @@ function Get-DLPAudit {
             Write-Status "$Icon $ModeIcon $($Policy.Name)" "Detail"
         }
         $Result.Details.WorkloadCoverage = $Workloads.Keys | ForEach-Object { @{ Workload = $_; Policies = $Workloads[$_] } }
+        
+        # ── Verificação granular de cobertura por workload ──
+        # Verifica se cada workload requerido é coberto por PELO MENOS uma política,
+        # e distingue cobertura via políticas custom vs apenas default/sistema.
         $RequiredWorkloads = @("Exchange", "SharePoint", "OneDriveForBusiness", "Teams")
         $MissingWorkloads = $RequiredWorkloads | Where-Object { -not $Workloads[$_] }
-        if ($MissingWorkloads) {
-            Write-Status "Workloads sem cobertura DLP: $($MissingWorkloads -join ', ')" "Warning"
-            $Result.Recommendations += @{ Priority = "High"; Category = "DLP"; Message = "Workloads sem proteção DLP: $($MissingWorkloads -join ', ')"; Remediation = "Crie políticas DLP que incluam esses workloads" }
+        
+        # Mapear quais políticas CUSTOM cobrem cada workload (via Location properties)
+        $CustomPolicyCoverage = @{}
+        $DefaultPolicyCoverage = @{}
+        foreach ($Policy in $Policies) {
+            $IsCustom = $Policy.Name -match "^DLP - "
+            $CoverageMap = if ($IsCustom) { $CustomPolicyCoverage } else { $DefaultPolicyCoverage }
+            # Verificar locations individuais (mais preciso que Workload property)
+            try {
+                if ($Policy.ExchangeLocation -and @($Policy.ExchangeLocation).Count -gt 0) {
+                    if (-not $CoverageMap["Exchange"]) { $CoverageMap["Exchange"] = @() }
+                    $CoverageMap["Exchange"] += $Policy.Name
+                }
+                if ($Policy.SharePointLocation -and @($Policy.SharePointLocation).Count -gt 0) {
+                    if (-not $CoverageMap["SharePoint"]) { $CoverageMap["SharePoint"] = @() }
+                    $CoverageMap["SharePoint"] += $Policy.Name
+                }
+                if ($Policy.OneDriveLocation -and @($Policy.OneDriveLocation).Count -gt 0) {
+                    if (-not $CoverageMap["OneDriveForBusiness"]) { $CoverageMap["OneDriveForBusiness"] = @() }
+                    $CoverageMap["OneDriveForBusiness"] += $Policy.Name
+                }
+                if ($Policy.TeamsLocation -and @($Policy.TeamsLocation).Count -gt 0) {
+                    if (-not $CoverageMap["Teams"]) { $CoverageMap["Teams"] = @() }
+                    $CoverageMap["Teams"] += $Policy.Name
+                }
+            } catch { <# Location properties may not exist for some policy types #> }
         }
+        
+        # Determinar cobertura efetiva: custom + default
+        $EffectivelyCovered = @()
+        $CoveredByCustomOnly = @()
+        $CoveredByDefaultOnly = @()
+        $TrulyMissing = @()
+        foreach ($Wl in $RequiredWorkloads) {
+            $HasCustom = $CustomPolicyCoverage[$Wl] -and $CustomPolicyCoverage[$Wl].Count -gt 0
+            $HasDefault = $DefaultPolicyCoverage[$Wl] -and $DefaultPolicyCoverage[$Wl].Count -gt 0
+            $HasWorkloadProp = $Workloads[$Wl] -and $Workloads[$Wl] -gt 0
+            if ($HasCustom) {
+                $EffectivelyCovered += $Wl
+                $CoveredByCustomOnly += $Wl
+            } elseif ($HasDefault -or $HasWorkloadProp) {
+                $EffectivelyCovered += $Wl
+                $CoveredByDefaultOnly += $Wl
+            } else {
+                $TrulyMissing += $Wl
+            }
+        }
+        
+        # Reportar resultados da análise granular
+        if ($TrulyMissing.Count -gt 0) {
+            Write-Status "Workloads SEM cobertura DLP: $($TrulyMissing -join ', ')" "Warning"
+            $Result.Recommendations += @{ Priority = "High"; Category = "DLP"; Message = "Workloads sem proteção DLP: $($TrulyMissing -join ', ')"; Remediation = "Execute M365-Remediation.ps1 -OnlyDLP ou crie políticas DLP que incluam esses workloads" }
+        } elseif ($CoveredByCustomOnly.Count -eq $RequiredWorkloads.Count) {
+            Write-Status "Todos os workloads cobertos por políticas customizadas" "Success"
+        } else {
+            Write-Status "Todos os workloads cobertos" "Success"
+            if ($CoveredByDefaultOnly.Count -gt 0) {
+                Write-Status "Cobertos apenas por políticas default/sistema: $($CoveredByDefaultOnly -join ', ')" "Detail"
+            }
+        }
+        # Detalhe por workload
+        foreach ($Wl in $RequiredWorkloads) {
+            $CustomNames = if ($CustomPolicyCoverage[$Wl]) { $CustomPolicyCoverage[$Wl] -join ', ' } else { $null }
+            $DefaultNames = if ($DefaultPolicyCoverage[$Wl]) { $DefaultPolicyCoverage[$Wl] -join ', ' } else { $null }
+            if ($CustomNames) {
+                Write-Status "${Wl}: ✅ Custom ($CustomNames)" "Detail"
+            } elseif ($DefaultNames) {
+                Write-Status "${Wl}: ⚠️  Apenas default ($DefaultNames)" "Detail"
+            } else {
+                Write-Status "${Wl}: ❌ Sem cobertura" "Detail"
+            }
+        }
+        
+        $Result.Details.CustomPolicyCoverage = $CustomPolicyCoverage
+        $Result.Details.DefaultPolicyCoverage = $DefaultPolicyCoverage
+        $Result.Details.TrulyMissingWorkloads = $TrulyMissing
+        $Result.Details.EffectivelyCoveredWorkloads = $EffectivelyCovered
         $Rules = Get-DlpComplianceRule -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
         if ($Rules) {
             $Result.Details.TotalRules = @($Rules).Count
@@ -333,7 +417,7 @@ function Get-DLPAudit {
         $ScoreFactors = @(
             @{ Weight = 30; Value = if ($Result.Details.TotalPolicies -ge $Script:Config.MinDLPPolicies) { 1 } else { $Result.Details.TotalPolicies / $Script:Config.MinDLPPolicies } },
             @{ Weight = 30; Value = if ($Result.Details.TotalPolicies -gt 0) { $Result.Details.EnabledPolicies / $Result.Details.TotalPolicies } else { 0 } },
-            @{ Weight = 20; Value = if ($MissingWorkloads.Count -eq 0) { 1 } else { 1 - ($MissingWorkloads.Count / $RequiredWorkloads.Count) } },
+            @{ Weight = 20; Value = if ($TrulyMissing.Count -eq 0) { 1 } else { 1 - ($TrulyMissing.Count / $RequiredWorkloads.Count) } },
             @{ Weight = 20; Value = if ($Result.Details.TestModePolicies -eq 0) { 1 } else { 1 - ($Result.Details.TestModePolicies / $Result.Details.TotalPolicies) } }
         )
         $Result.Score = [math]::Round(($ScoreFactors | ForEach-Object { $_.Weight * $_.Value } | Measure-Object -Sum).Sum)
