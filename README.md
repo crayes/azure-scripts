@@ -43,12 +43,14 @@ Principais recursos:
 
 Veja [azure-scripts-ui/README.md](azure-scripts-ui/README.md) para instalação e uso.
 
-### ✨ Novidades v4.1.1
+### ✨ Novidades v4.2
 
-- **M365-Remediation.ps1 v4.1.1** - Integração com Purview Compliance Manager: gera evidências (CSV/JSON/MD) automaticamente após remediação
-- **Parâmetros novos:** `-TenantName`, `-SkipPurviewEvidence`, `-DryRun` (substituiu `-WhatIf`)
-- **Fix:** Funções renomeadas para verbos aprovados pelo PowerShell (zero warnings no PSScriptAnalyzer)
-- **Fix:** `-WarningAction SilentlyContinue` substituído por `3>$null` (imune a `$WarningPreference` corrompida)
+- **M365-Remediation.ps1 v4.2** - DLP Workload Coverage Repair: repara automaticamente políticas DLP com workloads faltantes
+- **Purview-Audit-PS7.ps1 v4.1** - Análise granular de cobertura DLP por workload (Exchange, SharePoint, OneDrive, Teams)
+- **Função `Repair-DLPWorkloadCoverage`** - Detecta e corrige políticas DLP com localizações faltantes
+- **Parâmetros novos (v4.1.1):** `-TenantName`, `-SkipPurviewEvidence`, `-DryRun` (substituiu `-WhatIf`)
+- **Fix (v4.1.1):** Funções renomeadas para verbos aprovados pelo PowerShell (zero warnings no PSScriptAnalyzer)
+- **Fix (v4.1.1):** `-WarningAction SilentlyContinue` substituído por `3>$null` (imune a `$WarningPreference` corrompida)
 - **Audit-ImplementedPolicies.ps1** - Audita o que JÁ está implementado e gera evidências prontas para o Purview Compliance Manager
 - **Purview-Audit-PA-PS7.ps1** - Auditoria Purview + Power Platform DLP (macOS/Linux compatível)
 - **PURVIEW-COMPLIANCE-GUIDE.md** - Guia completo para aumentar o Compliance Score
@@ -349,7 +351,7 @@ pwsh ./scripts/Purview/Purview-Audit-PA-PS7.ps1
 
 ---
 
-#### `Purview-Audit-PS7.ps1` (v4.0)
+#### `Purview-Audit-PS7.ps1` (v4.1)
 Auditoria abrangente do Microsoft Purview com **detecção automática de capacidades**:
 
 - Políticas DLP
@@ -360,6 +362,12 @@ Auditoria abrangente do Microsoft Purview com **detecção automática de capaci
 - Insider Risk Management
 - eDiscovery
 - Communication Compliance
+
+**Novidades v4.1:**
+- ✅ **Análise granular de DLP por workload** - Distingue políticas custom vs default/sistema
+- ✅ **Verificação de cobertura completa** - Identifica políticas DLP faltando Exchange/SharePoint/OneDrive/Teams
+- ✅ **Score DLP inteligente** - Não penaliza quando políticas custom cobrem todos os workloads
+- ✅ **Recomendações direcionadas** - Aponta para `M365-Remediation.ps1 -OnlyDLP` quando há gaps
 
 **Novidades v4.0:**
 - ✅ **Detecção automática de licença** - Identifica E5/E3/Business automaticamente
@@ -407,16 +415,23 @@ Auditoria abrangente do Microsoft Purview com **detecção automática de capaci
 
 ### 🔧 Remediação
 
-#### `M365-Remediation.ps1` (v4.1.1) ⭐ ATUALIZADO
+#### `M365-Remediation.ps1` (v4.2) ⭐ ATUALIZADO
 Aplica configurações de segurança recomendadas com **detecção automática de capacidades** e **geração de evidências para o Purview Compliance Manager**:
 
 - ✅ Ativa Unified Audit Log
 - ✅ Configura Mailbox Audit
 - ✅ Cria políticas de Retenção (se licenciado)
 - ✅ Cria políticas DLP para dados brasileiros (CPF, CNPJ) (se licenciado)
+- ✅ **Repara políticas DLP existentes** - Adiciona workloads faltantes (Exchange/SharePoint/OneDrive/Teams)
 - ✅ Desabilita provedores externos no OWA (opcional)
 - ✅ Configura alertas de segurança (básicos ou avançados conforme licença)
 - ✅ **Gera evidências Purview** (DLP, Labels, Retention, Audit, ATP, Transport Rules, DKIM, CA)
+
+**Novidades v4.2:**
+- ✅ **DLP Workload Coverage Repair** - Verifica e corrige automaticamente políticas DLP com cobertura incompleta
+- ✅ **Função `Repair-DLPWorkloadCoverage`** - Adiciona locations faltantes usando `Set-DlpCompliancePolicy`
+- ✅ **Análise granular** - Identifica quais workloads estão faltando em cada política
+- ✅ **Compatível com `-DryRun`** - Simula correções sem aplicar
 
 **Novidades v4.1.1:**
 - ✅ **Purview Evidence integrado** - Coleta evidências de todas as políticas implementadas e gera CSV/JSON/Markdown
@@ -724,7 +739,20 @@ Contribuições são bem-vindas! Por favor:
 
 ## 📝 Changelog
 
-### v4.1.1 - Fevereiro 2026 ⭐ ATUAL
+### v4.2 - Fevereiro 2026 ⭐ ATUAL
+- ✨ **M365-Remediation.ps1 v4.2** - DLP Workload Coverage Repair
+  - Nova função `Repair-DLPWorkloadCoverage` que verifica e corrige automaticamente políticas DLP com workloads faltantes
+  - Análise granular de cobertura por workload (Exchange, SharePoint, OneDrive, Teams)
+  - Usa `Set-DlpCompliancePolicy` para adicionar locations faltantes
+  - Compatível com modo `-DryRun` para simulação
+- ✨ **Purview-Audit-PS7.ps1 v4.1** - Análise granular de cobertura DLP
+  - Distingue políticas custom vs default/sistema
+  - Verifica ExchangeLocation/SharePointLocation/OneDriveLocation/TeamsLocation
+  - Score DLP não penaliza quando políticas custom cobrem todos os workloads
+  - Detalhe por workload mostrando quais políticas cobrem cada um
+  - Recomendação aponta para `M365-Remediation.ps1 -OnlyDLP`
+
+### v4.1.1 - Fevereiro 2026
 - 🔧 **Fix:** Funções renomeadas para verbos aprovados (Remediate-* → Repair-*, Generate-HTMLReport → New-HTMLReport)
 - 🔧 **Fix:** `-WarningAction SilentlyContinue` → `3>$null` (previne crash de ActionPreference)
 - 🔧 **Fix:** `-WhatIf` renomeado para `-DryRun` (evita conflito com SupportsShouldProcess)
