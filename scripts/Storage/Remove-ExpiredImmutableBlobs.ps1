@@ -19,7 +19,7 @@
     Filtrar por Resource Group específico. Se não informado, varre todos.
 
 .PARAMETER StorageAccountName
-    Filtrar por Storage Account específico. Se não informado, varre todos.
+    Filtrar por Storage Account específica. Se não informado, varre todos.
 
 .PARAMETER ContainerName
     Filtrar por container específico. Se não informado, varre todos.
@@ -83,10 +83,15 @@
     Remove blobs elegíveis apenas em Storage Accounts com 10 TB ou mais de volume analisado.
 
 .NOTES
-    Versão: 1.4.1
+    Versão: 1.4.2
     Autor: M365 Security Toolkit
     Requer: Az.Storage, Az.Accounts (PowerShell 7.0+)
     Licença: MIT
+    
+    Changelog v1.4.2:
+    - Ajuste do modo padrão para remoção (com confirmação)
+    - Correção do modo verbose e switches não inicializados
+    - Processamento paginado sem carregar todos os blobs na memória
     
     Changelog v1.4.1:
     - Corrigido problema de carregamento completo na memória
@@ -104,7 +109,7 @@
 #Requires -Version 7.0
 #Requires -Modules Az.Accounts, Az.Storage
 
-[CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'DryRun')]
+[CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'RemoveBlobs')]
 param(
     [Parameter()]
     [string]$SubscriptionId,
@@ -151,9 +156,21 @@ param(
 # ============================================================================
 
 $ErrorActionPreference = "Stop"
-$script:ScriptVersion = "1.4.0"
+$script:ScriptVersion = "1.4.2"
 $script:StartTime = Get-Date
 $script:Now = [DateTimeOffset]::UtcNow
+
+$script:VerboseProgress = $VerboseProgress
+$script:DryRun = $DryRun
+$script:RemoveBlobs = $RemoveBlobs
+$script:RemoveImmutabilityPolicyOnly = $RemoveImmutabilityPolicyOnly
+
+if (-not $PSBoundParameters.ContainsKey('DryRun') -and
+    -not $PSBoundParameters.ContainsKey('RemoveBlobs') -and
+    -not $PSBoundParameters.ContainsKey('RemoveImmutabilityPolicyOnly')) {
+    $script:RemoveBlobs = $true
+    $RemoveBlobs = $true
+}
 
 # Contadores globais
 $script:Stats = @{
@@ -765,7 +782,7 @@ function Export-HtmlReport {
     </div>
 </body>
 </html>
-"@
+"@;
 
     $html | Out-File -FilePath $Path -Encoding utf8
     Write-Log "Relatório HTML salvo em: $Path" "SUCCESS"
@@ -806,8 +823,8 @@ function Start-ImmutabilityAudit {
     Write-Host ""
 
     # Determinar modo de operação
-    $mode = if ($RemoveBlobs) { "REMOÇÃO DE BLOBS" }
-            elseif ($RemoveImmutabilityPolicyOnly) { "REMOÇÃO DE POLÍTICAS" }
+    $mode = if ($script:RemoveBlobs) { "REMOÇÃO DE BLOBS" }
+            elseif ($script:RemoveImmutabilityPolicyOnly) { "REMOÇÃO DE POLÍTICAS" }
             else { "SIMULAÇÃO (DryRun)" }
 
     Write-Log "Modo de operação: $mode" "SECTION"
@@ -825,7 +842,7 @@ function Start-ImmutabilityAudit {
     }
 
     # Confirmação para modos destrutivos
-    if ($RemoveBlobs -or $RemoveImmutabilityPolicyOnly) {
+    if ($script:RemoveBlobs -or $script:RemoveImmutabilityPolicyOnly) {
         Write-Host ""
         Write-Host "  ATENÇÃO: Este script irá executar ações destrutivas!" -ForegroundColor Red
         Write-Host "  Modo: $mode" -ForegroundColor Red
@@ -926,18 +943,17 @@ function Start-ImmutabilityAudit {
                     # Incluir versões para version-level immutability
                     $blobParams['IncludeVersion'] = $true
 
-                    # FASE 1: Coletar todos os blobs usando paginação (evita estouro de memória)
-                    # Importante: Coletamos TODOS os blobs primeiro, removemos DEPOIS (evita loop infinito)
+                    # FASE 1 + 2: processar página por página e coletar somente elegíveis
                     Write-VerboseLog "  Container '$containerNameItem': Iniciando coleta paginada de blobs..." "INFO"
-                    
-                    $allBlobsCollected = [System.Collections.Generic.List[Microsoft.WindowsAzure.Commands.Common.Storage.ResourceModel.AzureStorageBlob]]::new()
+
+                    $blobsToProcess = [System.Collections.Generic.List[PSCustomObject]]::new()
                     $continuationToken = $null
                     $pageNumber = 0
-                    
+                    $processIndex = 0
+
                     do {
                         $pageNumber++
-                        
-                        # Adicionar ContinuationToken se houver
+
                         if ($null -ne $continuationToken) {
                             $blobParams['ContinuationToken'] = $continuationToken
                         }
@@ -946,246 +962,213 @@ function Start-ImmutabilityAudit {
                         }
 
                         Write-VerboseLog "  Carregando página $pageNumber (até 5000 blobs)..." "INFO"
-                        
-                        # Buscar próxima página de blobs
+
                         $blobPage = Get-AzStorageBlob @blobParams
-                        
-                        if ($null -ne $blobPage) {
-                            # Adicionar blobs da página à coleção total
-                            $pageBlobs = @($blobPage)
-                            foreach ($blob in $pageBlobs) {
-                                $allBlobsCollected.Add($blob)
-                            }
-                            
-                            $pageBlobCount = $pageBlobs.Count
-                            $totalBlobCount = $allBlobsCollected.Count
-                            Write-VerboseLog "  Página $pageNumber`: $pageBlobCount blob(s) | Total acumulado: $totalBlobCount" "INFO"
-                            
-                            # Obter token de continuação para próxima página
-                            # O token está no último blob da página
-                            if ($pageBlobs.Count -gt 0) {
-                                $lastBlob = $pageBlobs[-1]
-                                $continuationToken = $lastBlob.ContinuationToken
-                            }
-                            else {
-                                $continuationToken = $null
-                            }
-                        }
-                        else {
-                            # Nenhum blob retornado
+                        $pageBlobs = @($blobPage)
+
+                        if ($pageBlobs.Count -eq 0) {
                             $continuationToken = $null
-                        }
-                        
-                    } while ($null -ne $continuationToken)
-
-                    $blobIndex = $allBlobsCollected.Count
-                    $totalPages = $pageNumber
-                    Write-VerboseLog "  Container '$containerNameItem': ${blobIndex} blob(s) coletado(s) em ${totalPages} página(s)" "SUCCESS"
-
-                    # FASE 2: Processar e identificar blobs elegíveis para ação
-                    $blobsToProcess = [System.Collections.Generic.List[PSCustomObject]]::new()
-                    $processIndex = 0
-
-                    foreach ($blob in $allBlobsCollected) {
-                        $processIndex++
-                        $script:Stats.BlobsScanned++
-                        $script:Stats.BytesScanned += $blob.Length
-                        $accountBlobsScanned++
-                        $accountBytesScanned += $blob.Length
-                        $containerBlobCount++
-                        $containerBytesScanned += $blob.Length
-
-                        # Atualizar barra de progresso a cada 100 blobs
-                        if ($script:VerboseProgress -and ($processIndex % 100 -eq 0 -or $processIndex -eq 1)) {
-                            $throughput = Get-Throughput -Count $processIndex -Since $containerStartTime
-                            $elapsed = Get-ElapsedFormatted -Since $containerStartTime
-                            $sizeSoFar = Format-FileSize $containerBytesScanned
-                            $percentDone = ($processIndex / $blobIndex) * 100
-
-                            Show-Progress -Activity "Analisando Storage Accounts" `
-                                -Status "[$accountIndex/$totalAccounts] $accountName | Container [$containerIndex/$totalContainers]: $containerNameItem" `
-                                -PercentComplete $percentDone `
-                                -CurrentOperation "Analisando blob $processIndex/$blobIndex | $throughput | Elapsed: $elapsed | Expirados: $containerExpiredCount | Tamanho: $sizeSoFar"
+                            break
                         }
 
-                        $blobResult = Test-BlobImmutabilityExpired `
-                            -Blob $blob `
-                            -AccountName $accountName `
-                            -ContainerNameLocal $containerNameItem
+                        foreach ($blob in $pageBlobs) {
+                            $processIndex++
+                            $script:Stats.BlobsScanned++
+                            $script:Stats.BytesScanned += $blob.Length
+                            $accountBlobsScanned++;
+                            $accountBytesScanned += $blob.Length;
+                            $containerBlobCount++;
+                            $containerBytesScanned += $blob.Length;
 
-                        # Log verbose de cada blob com política
-                        if ($script:VerboseProgress -and $blobResult.Status -ne "NoPolicy") {
-                            $statusIcon = switch ($blobResult.Status) {
-                                "Expired" { "EXPIRED" }
-                                "Active"  { "ACTIVE" }
-                                default   { $blobResult.Status }
+                            if ($script:VerboseProgress -and ($processIndex % 100 -eq 0 -or $processIndex -eq 1)) {
+                                $throughput = Get-Throughput -Count $processIndex -Since $containerStartTime;
+                                $elapsed = Get-ElapsedFormatted -Since $containerStartTime;
+                                $sizeSoFar = Format-FileSize $containerBytesScanned;
+
+                                Show-Progress -Activity "Analisando Storage Accounts" `
+                                    -Status "[$accountIndex/$totalAccounts] $accountName | Container [$containerIndex/$totalContainers]: $containerNameItem" `
+                                    -CurrentOperation "Analisando blob $processIndex | $throughput | Elapsed: $elapsed | Expirados: $containerExpiredCount | Tamanho: $sizeSoFar";
                             }
-                            $blobShortName = if ($blob.Name.Length -gt 80) { $blob.Name.Substring(0,77) + "..." } else { $blob.Name }
-                            $blobSize = Format-FileSize $blob.Length
-                            $expiredInfo = if ($blobResult.DaysExpired -gt 0) { " | Expirado há $($blobResult.DaysExpired) dias" } else { "" }
-                            $logLevel = if ($blobResult.Status -eq "Expired") { "WARN" } else { "INFO" }
-                            Write-VerboseLog "    [$statusIcon] $blobShortName ($blobSize)$expiredInfo" $logLevel
-                        }
 
-                        if ($blobResult.Status -eq "Expired") {
-                            $containerExpiredCount++
-                        }
+                            $blobResult = Test-BlobImmutabilityExpired `
+                                -Blob $blob `
+                                -AccountName $accountName `
+                                -ContainerNameLocal $containerNameItem;
 
-                        # Coletar blobs elegíveis para processamento posterior
-                        if ($blobResult.Eligible) {
-                            $accountEligibleBytes += $blob.Length
-
-                            if (($RemoveBlobs -or $RemoveImmutabilityPolicyOnly) -and $MinAccountSizeTB -gt 0) {
-                                $blobResult.Action = "PendingThreshold"
-                                $accountEligibleQueue.Add($blobResult)
+                            if ($script:VerboseProgress -and $blobResult.Status -ne "NoPolicy") {
+                                $statusIcon = switch ($blobResult.Status) {
+                                    "Expired" { "EXPIRED" }
+                                    "Active"  { "ACTIVE" }
+                                    default   { $blobResult.Status }
+                                }
+                                $blobShortName = if ($blob.Name.Length -gt 80) { $blob.Name.Substring(0,77) + "..." } else { $blob.Name }
+                                $blobSize = Format-FileSize $blob.Length;
+                                $expiredInfo = if ($blobResult.DaysExpired -gt 0) { " | Expirado há $($blobResult.DaysExpired) dias" } else { "" }
+                                $logLevel = if ($blobResult.Status -eq "Expired") { "WARN" } else { "INFO" }
+                                Write-VerboseLog "    [$statusIcon] $blobShortName ($blobSize)$expiredInfo" $logLevel;
                             }
-                            else {
-                                # Em modo destrutivo, coletar para processar depois
-                                if ($RemoveBlobs -or $RemoveImmutabilityPolicyOnly) {
-                                    $blobsToProcess.Add($blobResult)
+
+                            if ($blobResult.Status -eq "Expired") {
+                                $containerExpiredCount++;
+                            }
+
+                            if ($blobResult.Eligible) {
+                                $accountEligibleBytes += $blob.Length;
+
+                                if (($script:RemoveBlobs -or $script:RemoveImmutabilityPolicyOnly) -and $MinAccountSizeTB -gt 0) {
+                                    $blobResult.Action = "PendingThreshold";
+                                    $accountEligibleQueue.Add($blobResult);
                                 }
                                 else {
-                                    # DryRun - apenas marcar
-                                    $blobResult.Action = "DryRun"
-                                    Write-Log "    DRYRUN: '$($blobResult.BlobName)' - Expirado há $($blobResult.DaysExpired) dias ($($blobResult.LengthFormatted))" "INFO"
+                                    if ($script:RemoveBlobs -or $script:RemoveImmutabilityPolicyOnly) {
+                                        $blobsToProcess.Add($blobResult);
+                                    }
+                                    else {
+                                        $blobResult.Action = "DryRun";
+                                        Write-Log "    DRYRUN: '$($blobResult.BlobName)' - Expirado há $($blobResult.DaysExpired) dias ($($blobResult.LengthFormatted))" "INFO";
+                                    }
                                 }
+                            }
+
+                            if ($blobResult.Status -ne "NoPolicy") {
+                                $script:Results.Add($blobResult);
                             }
                         }
 
-                        # Adicionar ao resultado (apenas blobs com política)
-                        if ($blobResult.Status -ne "NoPolicy") {
-                            $script:Results.Add($blobResult)
-                        }
-                    }
+                        $continuationToken = $pageBlobs[-1].ContinuationToken;
+
+                    } while ($null -ne $continuationToken);
+
+                    Write-VerboseLog "  Container '$containerNameItem': ${containerBlobCount} blob(s) coletado(s) em ${pageNumber} página(s)" "SUCCESS";
 
                     # FASE 3: Executar ações nos blobs coletados (apenas em modo destrutivo)
                     if ($blobsToProcess.Count -gt 0) {
-                        $blobsToProcessCount = $blobsToProcess.Count
-                        Write-Log "  Executando ações em ${blobsToProcessCount} blob(s) do container '$containerNameItem'..." "WARN"
-                        
-                        $actionIndex = 0
+                        $blobsToProcessCount = $blobsToProcess.Count;
+                        Write-Log "  Executando ações em ${blobsToProcessCount} blob(s) do container '$containerNameItem'..." "WARN";
+
+                        $actionIndex = 0;
                         foreach ($blobToProcess in $blobsToProcess) {
-                            $actionIndex++
-                            
+                            $actionIndex++;
+
                             if ($script:VerboseProgress -and ($actionIndex % 10 -eq 0 -or $actionIndex -eq 1)) {
-                                $totalToProcess = $blobsToProcess.Count
-                                $percentDone = ($actionIndex / $totalToProcess) * 100
+                                $totalToProcess = $blobsToProcess.Count;
+                                $percentDone = ($actionIndex / $totalToProcess) * 100;
                                 Show-Progress -Activity "Executando ações" `
                                     -Status "Container: $containerNameItem" `
                                     -PercentComplete $percentDone `
-                                    -CurrentOperation "Processando blob ${actionIndex}/${totalToProcess}"
+                                    -CurrentOperation "Processando blob ${actionIndex}/${totalToProcess}";
                             }
-                            
-                            Invoke-BlobAction -BlobInfo $blobToProcess -StorageContext $storageContext
+
+                            Invoke-BlobAction -BlobInfo $blobToProcess -StorageContext $storageContext;
                         }
                     }
 
-                    Write-VerboseLog "  Container '$containerNameItem': Análise completa - $containerBlobCount blob(s) processado(s)" "SUCCESS"
+                    Write-VerboseLog "  Container '$containerNameItem': Análise completa - $containerBlobCount blob(s) processado(s)" "SUCCESS";
 
                     # Resumo do container (verbose)
                     if ($script:VerboseProgress) {
-                        $containerDuration = (Get-Date) - $containerStartTime
-                        $containerDurationStr = $containerDuration.ToString('hh\:mm\:ss')
-                        $throughputFinal = Get-Throughput -Count $containerBlobCount -Since $containerStartTime
-                        $containerSize = Format-FileSize $containerBytesScanned
-                        Write-Log "  Resumo '$containerNameItem': $containerBlobCount blobs | $containerSize | $containerExpiredCount expirado(s) | $throughputFinal | Dur: $containerDurationStr" "INFO"
+                        $containerDuration = (Get-Date) - $containerStartTime;
+                        $containerDurationStr = $containerDuration.ToString('hh\:mm\:ss');
+                        $throughputFinal = Get-Throughput -Count $containerBlobCount -Since $containerStartTime;
+                        $containerSize = Format-FileSize $containerBytesScanned;
+                        Write-Log "  Resumo '$containerNameItem': $containerBlobCount blobs | $containerSize | $containerExpiredCount expirado(s) | $throughputFinal | Dur: $containerDurationStr" "INFO";
                     }
                 }
                 catch {
-                    Write-Log "  Erro ao processar container '$containerNameItem': $($_.Exception.Message)" "ERROR"
-                    $script:Stats.Errors++
+                    Write-Log "  Erro ao processar container '$containerNameItem': $($_.Exception.Message)" "ERROR";
+                    $script:Stats.Errors++;
                 }
             }
 
-            if (($RemoveBlobs -or $RemoveImmutabilityPolicyOnly) -and $MinAccountSizeTB -gt 0) {
-                $thresholdBytes = [long]$MinAccountSizeTB * 1TB
+            if (($script:RemoveBlobs -or $script:RemoveImmutabilityPolicyOnly) -and $MinAccountSizeTB -gt 0) {
+                $thresholdBytes = [long]$MinAccountSizeTB * 1TB;
 
                 if ($accountBytesScanned -ge $thresholdBytes) {
-                    $accountScannedSize = Format-FileSize $accountBytesScanned
-                    Write-Log "Conta '$accountName' qualificada para ação destrutiva: $accountScannedSize analisados (limiar: $MinAccountSizeTB TB)." "WARN"
+                    $accountScannedSize = Format-FileSize $accountBytesScanned;
+                    Write-Log "Conta '$accountName' qualificada para ação destrutiva: $accountScannedSize analisados (limiar: $MinAccountSizeTB TB)." "WARN";
 
                     foreach ($queuedBlob in $accountEligibleQueue) {
-                        Invoke-BlobAction -BlobInfo $queuedBlob -StorageContext $storageContext
+                        Invoke-BlobAction -BlobInfo $queuedBlob -StorageContext $storageContext;
                     }
                 }
                 else {
-                    $accountScannedSize = Format-FileSize $accountBytesScanned
-                    Write-Log "Conta '$accountName' abaixo do limiar ($MinAccountSizeTB TB): $accountScannedSize. Nenhuma ação destrutiva será executada." "INFO"
+                    $accountScannedSize = Format-FileSize $accountBytesScanned;
+                    Write-Log "Conta '$accountName' abaixo do limiar ($MinAccountSizeTB TB): $accountScannedSize. Nenhuma ação destrutiva será executada." "INFO";
 
                     foreach ($queuedBlob in $accountEligibleQueue) {
-                        $queuedBlob.Action = "SkippedBelowThreshold"
+                        $queuedBlob.Action = "SkippedBelowThreshold";
                     }
                 }
             }
 
             # Resumo da Storage Account (verbose)
             if ($script:VerboseProgress) {
-                $accountDuration = (Get-Date) - $accountStartTime
-                $accountDurationStr = $accountDuration.ToString('hh\:mm\:ss')
-                $accountSize = Format-FileSize $accountBytesScanned
-                $accountEligibleSize = Format-FileSize $accountEligibleBytes
-                Write-Log "Resumo '$accountName': $accountBlobsScanned blobs total | $accountSize | Elegível: $accountEligibleSize | Dur: $accountDurationStr" "SUCCESS"
+                $accountDuration = (Get-Date) - $accountStartTime;
+                $accountDurationStr = $accountDuration.ToString('hh\:mm\:ss');
+                $accountSize = Format-FileSize $accountBytesScanned;
+                $accountEligibleSize = Format-FileSize $accountEligibleBytes;
+                Write-Log "Resumo '$accountName': $accountBlobsScanned blobs total | $accountSize | Elegível: $accountEligibleSize | Dur: $accountDurationStr" "SUCCESS";
             }
         }
         catch {
-            Write-Log "Erro ao processar Storage Account '$accountName': $($_.Exception.Message)" "ERROR"
-            $script:Stats.Errors++
+            Write-Log "Erro ao processar Storage Account '$accountName': $($_.Exception.Message)" "ERROR";
+            $script:Stats.Errors++;
         }
     }
 
     # Limpar barra de progresso
     if ($script:VerboseProgress) {
-        Write-Progress -Activity "Analisando Storage Accounts" -Completed
+        Write-Progress -Activity "Analisando Storage Accounts" -Completed;
     }
 
     # Gerar relatórios
-    Write-Log "Gerando relatórios..." "SECTION"
+    Write-Log "Gerando relatórios..." "SECTION";
 
-    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-    $htmlPath = Join-Path $OutputPath "ImmutabilityAudit_$timestamp.html"
-    Export-HtmlReport -Path $htmlPath
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss";
+    $htmlPath = Join-Path $OutputPath "ImmutabilityAudit_$timestamp.html";
+    Export-HtmlReport -Path $htmlPath;
 
     if ($ExportCsv) {
-        $csvPath = Join-Path $OutputPath "ImmutabilityAudit_$timestamp.csv"
-        Export-CsvReport -Path $csvPath
+        $csvPath = Join-Path $OutputPath "ImmutabilityAudit_$timestamp.csv";
+        Export-CsvReport -Path $csvPath;
     }
 
     # Resumo final
-    Write-Host ""
-    Write-Host "============================================================" -ForegroundColor Cyan
-    Write-Host "  RESUMO DA EXECUÇÃO" -ForegroundColor Cyan
-    Write-Host "============================================================" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Log "Storage Accounts analisadas: $($script:Stats.StorageAccountsScanned)" "INFO"
-    Write-Log "Containers analisados:       $($script:Stats.ContainersScanned)" "INFO"
-    Write-Log "Containers com política:     $($script:Stats.ContainersWithPolicy)" "INFO"
-    Write-Log "Blobs analisados:            $($script:Stats.BlobsScanned)" "INFO"
-    Write-Log "Blobs com imutab. vencida:   $($script:Stats.BlobsWithExpiredPolicy)" $(if ($script:Stats.BlobsWithExpiredPolicy -gt 0) { "WARN" } else { "SUCCESS" })
-    Write-Log "Blobs com imutab. ativa:     $($script:Stats.BlobsWithActivePolicy)" "SUCCESS"
-    Write-Log "Blobs com Legal Hold:        $($script:Stats.BlobsWithLegalHold)" $(if ($script:Stats.BlobsWithLegalHold -gt 0) { "WARN" } else { "INFO" })
+    Write-Host "";
+    Write-Host "============================================================" -ForegroundColor Cyan;
+    Write-Host "  RESUMO DA EXECUÇÃO" -ForegroundColor Cyan;
+    Write-Host "============================================================" -ForegroundColor Cyan;
+    Write-Host "";
+    Write-Log "Storage Accounts analisadas: $($script:Stats.StorageAccountsScanned)" "INFO";
+    Write-Log "Containers analisados:       $($script:Stats.ContainersScanned)" "INFO";
+    Write-Log "Containers com política:     $($script:Stats.ContainersWithPolicy)" "INFO";
+    Write-Log "Blobs analisados:            $($script:Stats.BlobsScanned)" "INFO";
+    Write-Log "Blobs com imutab. vencida:   $($script:Stats.BlobsWithExpiredPolicy)" $(if ($script:Stats.BlobsWithExpiredPolicy -gt 0) { "WARN" } else { "SUCCESS" });
+    Write-Log "Blobs com imutab. ativa:     $($script:Stats.BlobsWithActivePolicy)" "SUCCESS";
+    Write-Log "Blobs com Legal Hold:        $($script:Stats.BlobsWithLegalHold)" $(if ($script:Stats.BlobsWithLegalHold -gt 0) { "WARN" } else { "INFO" });
     
-    $totalScannedSize = Format-FileSize $script:Stats.BytesScanned
-    $totalEligibleSize = Format-FileSize $script:Stats.BytesEligible
-    Write-Log "Total analisado (bytes):     $totalScannedSize" "INFO"
-    Write-Log "Espaço elegível p/ remoção:  $totalEligibleSize" "INFO"
+    $totalScannedSize = Format-FileSize $script:Stats.BytesScanned;
+    $totalEligibleSize = Format-FileSize $script:Stats.BytesEligible;
+    Write-Log "Total analisado (bytes):     $totalScannedSize" "INFO";
+    Write-Log "Espaço elegível p/ remoção:  $totalEligibleSize" "INFO";
 
-    if ($RemoveBlobs) {
-        Write-Log "Blobs removidos:             $($script:Stats.BlobsRemoved)" "SUCCESS"
+    if ($script:RemoveBlobs) {
+        Write-Log "Blobs removidos:             $($script:Stats.BlobsRemoved)" "SUCCESS";
     }
-    if ($RemoveImmutabilityPolicyOnly -or $RemoveBlobs) {
-        Write-Log "Políticas removidas:         $($script:Stats.PoliciesRemoved)" "SUCCESS"
+    if ($script:RemoveImmutabilityPolicyOnly -or $script:RemoveBlobs) {
+        Write-Log "Políticas removidas:         $($script:Stats.PoliciesRemoved)" "SUCCESS";
     }
 
-    Write-Log "Erros encontrados:           $($script:Stats.Errors)" $(if ($script:Stats.Errors -gt 0) { "ERROR" } else { "SUCCESS" })
-    Write-Log "Duração total:               $((Get-Date) - $script:StartTime)" "INFO"
-    Write-Host ""
+    Write-Log "Erros encontrados:           $($script:Stats.Errors)" $(if ($script:Stats.Errors -gt 0) { "ERROR" } else { "SUCCESS" });
+    Write-Log "Duração total:               $((Get-Date) - $script:StartTime)" "INFO";
+    Write-Host "";
 
     # Retornar objeto com resultados para pipeline
     return [PSCustomObject]@{
-        Stats            = $script:Stats
-        Results          = $script:Results
-        ContainerResults = $script:ContainerResults
-        ReportPath       = $htmlPath
+        Stats            = $script:Stats;
+        Results          = $script:Results;
+        ContainerResults = $script:ContainerResults;
+        ReportPath       = $htmlPath;
     }
 }
 
