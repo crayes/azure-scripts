@@ -92,6 +92,7 @@
     - Corrigido loop infinito ao remover blobs (coleta todos os blobs primeiro, executa ações depois)
     - Removida paginação manual incorreta que causava problemas
     - Melhorada barra de progresso com percentual real
+    - Corrigido escopo de variáveis: modo verbose e parâmetros agora funcionam corretamente em todas as funções
 #>
 
 #Requires -Version 7.0
@@ -213,7 +214,7 @@ function Write-VerboseLog {
         [string]$Message,
         [string]$Level = "INFO"
     )
-    if ($VerboseProgress) {
+    if ($script:VerboseProgress) {
         Write-Log $Message $Level
     }
 }
@@ -225,7 +226,7 @@ function Show-Progress {
         [int]$PercentComplete = -1,
         [string]$CurrentOperation = ""
     )
-    if (-not $VerboseProgress) { return }
+    if (-not $script:VerboseProgress) { return }
 
     $params = @{
         Activity = $Activity
@@ -447,7 +448,7 @@ function Test-BlobImmutabilityExpired {
                 $result.DaysExpired = $daysExpired
                 $result.Status = "Expired"
 
-                if ($MaxDaysExpired -gt 0 -and $daysExpired -lt $MaxDaysExpired) {
+                if ($script:MaxDaysExpired -gt 0 -and $daysExpired -lt $script:MaxDaysExpired) {
                     $result.Eligible = $false
                     $result.Action = "SkippedMinDays"
                 }
@@ -501,14 +502,14 @@ function Invoke-BlobAction {
     }
 
     # Modo DryRun
-    if ($DryRun -or (-not $RemoveBlobs -and -not $RemoveImmutabilityPolicyOnly)) {
+    if ($script:DryRun -or (-not $script:RemoveBlobs -and -not $script:RemoveImmutabilityPolicyOnly)) {
         $BlobInfo.Action = "DryRun"
         Write-Log "    DRYRUN: '$($BlobInfo.BlobName)' - Expirado há $($BlobInfo.DaysExpired) dias ($($BlobInfo.LengthFormatted))" "INFO"
         return
     }
 
     # Remover apenas a política de imutabilidade
-    if ($RemoveImmutabilityPolicyOnly) {
+    if ($script:RemoveImmutabilityPolicyOnly) {
         try {
             if ($PSCmdlet.ShouldProcess($BlobInfo.BlobName, "Remover política de imutabilidade")) {
                 Remove-AzStorageBlobImmutabilityPolicy `
@@ -530,7 +531,7 @@ function Invoke-BlobAction {
     }
 
     # Remover blob completo
-    if ($RemoveBlobs) {
+    if ($script:RemoveBlobs) {
         try {
             if ($PSCmdlet.ShouldProcess($BlobInfo.BlobName, "Remover blob com imutabilidade vencida")) {
                 # Primeiro, remover a política de imutabilidade (se existir e estiver unlocked)
@@ -565,7 +566,7 @@ function Export-HtmlReport {
     param([string]$Path)
 
     $duration = (Get-Date) - $script:StartTime
-    $modeLabel = if ($RemoveBlobs) { "REMOÇÃO" } elseif ($RemoveImmutabilityPolicyOnly) { "REMOÇÃO DE POLÍTICAS" } else { "SIMULAÇÃO (DryRun)" }
+    $modeLabel = if ($script:RemoveBlobs) { "REMOÇÃO" } elseif ($script:RemoveImmutabilityPolicyOnly) { "REMOÇÃO DE POLÍTICAS" } else { "SIMULAÇÃO (DryRun)" }
 
     $expiredBlobs = $script:Results | Where-Object { $_.Status -eq "Expired" }
     $legalHoldBlobs = $script:Results | Where-Object { $_.HasLegalHold -eq $true }
@@ -611,7 +612,7 @@ function Export-HtmlReport {
     <div class="header">
         <h1>Relatório de Blobs com Imutabilidade Vencida</h1>
         <p>Gerado em: $($script:StartTime.ToString("dd/MM/yyyy HH:mm:ss")) | Duração: $($duration.ToString("hh\:mm\:ss"))</p>
-        <span class="mode-badge $(if ($RemoveBlobs -or $RemoveImmutabilityPolicyOnly) { 'mode-remove' } else { 'mode-dryrun' })">$modeLabel</span>
+        <span class="mode-badge $(if ($script:RemoveBlobs -or $script:RemoveImmutabilityPolicyOnly) { 'mode-remove' } else { 'mode-dryrun' })">$modeLabel</span>
     </div>
 
     <div class="stats-grid">
@@ -805,7 +806,7 @@ function Start-ImmutabilityAudit {
 
     Write-Log "Modo de operação: $mode" "SECTION"
 
-    if ($VerboseProgress) {
+    if ($script:VerboseProgress) {
         Write-Log "Modo verbose ATIVADO - progresso detalhado em tempo real" "INFO"
     }
 
@@ -952,7 +953,7 @@ function Start-ImmutabilityAudit {
                         $containerBytesScanned += $blob.Length
 
                         # Atualizar barra de progresso a cada 100 blobs
-                        if ($VerboseProgress -and ($processIndex % 100 -eq 0 -or $processIndex -eq 1)) {
+                        if ($script:VerboseProgress -and ($processIndex % 100 -eq 0 -or $processIndex -eq 1)) {
                             $throughput = Get-Throughput -Count $processIndex -Since $containerStartTime
                             $elapsed = Get-ElapsedFormatted -Since $containerStartTime
 
@@ -968,7 +969,7 @@ function Start-ImmutabilityAudit {
                             -ContainerNameLocal $containerNameItem
 
                         # Log verbose de cada blob com política
-                        if ($VerboseProgress -and $blobResult.Status -ne "NoPolicy") {
+                        if ($script:VerboseProgress -and $blobResult.Status -ne "NoPolicy") {
                             $statusIcon = switch ($blobResult.Status) {
                                 "Expired" { "EXPIRED" }
                                 "Active"  { "ACTIVE" }
@@ -1017,7 +1018,7 @@ function Start-ImmutabilityAudit {
                         foreach ($blobToProcess in $blobsToProcess) {
                             $actionIndex++
                             
-                            if ($VerboseProgress -and ($actionIndex % 10 -eq 0 -or $actionIndex -eq 1)) {
+                            if ($script:VerboseProgress -and ($actionIndex % 10 -eq 0 -or $actionIndex -eq 1)) {
                                 Show-Progress -Activity "Executando ações" `
                                     -Status "Container: $containerNameItem" `
                                     -PercentComplete (($actionIndex / $blobsToProcess.Count) * 100) `
@@ -1031,7 +1032,7 @@ function Start-ImmutabilityAudit {
                     Write-VerboseLog "  Container '$containerNameItem': Análise completa - $containerBlobCount blob(s) processado(s)" "SUCCESS"
 
                     # Resumo do container (verbose)
-                    if ($VerboseProgress) {
+                    if ($script:VerboseProgress) {
                         $containerDuration = (Get-Date) - $containerStartTime
                         $throughputFinal = Get-Throughput -Count $containerBlobCount -Since $containerStartTime
                         Write-Log "  Resumo '$containerNameItem': $containerBlobCount blobs | $(Format-FileSize $containerBytesScanned) | $containerExpiredCount expirado(s) | $throughputFinal | Dur: $($containerDuration.ToString('hh\:mm\:ss'))" "INFO"
@@ -1063,7 +1064,7 @@ function Start-ImmutabilityAudit {
             }
 
             # Resumo da Storage Account (verbose)
-            if ($VerboseProgress) {
+            if ($script:VerboseProgress) {
                 $accountDuration = (Get-Date) - $accountStartTime
                 Write-Log "Resumo '$accountName': $accountBlobsScanned blobs total | $(Format-FileSize $accountBytesScanned) | Elegível: $(Format-FileSize $accountEligibleBytes) | Dur: $($accountDuration.ToString('hh\:mm\:ss'))" "SUCCESS"
             }
@@ -1075,7 +1076,7 @@ function Start-ImmutabilityAudit {
     }
 
     # Limpar barra de progresso
-    if ($VerboseProgress) {
+    if ($script:VerboseProgress) {
         Write-Progress -Activity "Analisando Storage Accounts" -Completed
     }
 

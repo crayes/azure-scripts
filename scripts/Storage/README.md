@@ -88,6 +88,9 @@ O script gera um relatório HTML com um dashboard interativo, resumo das estatí
 - 🐛 **CORREÇÃO CRÍTICA**: Resolvido problema de loop infinito ao usar `-RemoveBlobs`
   - O script agora coleta todos os blobs primeiro, depois executa as ações
   - Evita modificar o container durante a iteração
+- 🐛 **CORREÇÃO**: Modo verbose (`-VerboseProgress`) agora funciona corretamente
+  - Corrigido escopo de variáveis dentro das funções
+  - Todas as mensagens de log e barras de progresso agora aparecem quando o modo está ativo
 - ✨ Melhorada barra de progresso com percentual real de conclusão
 - 📝 Removida referência a paginação manual que causava problemas
 
