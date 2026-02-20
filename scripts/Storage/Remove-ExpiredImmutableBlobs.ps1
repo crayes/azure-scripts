@@ -42,6 +42,12 @@
 .PARAMETER IncludeSoftDeleted
     Inclui blobs soft-deleted na análise.
 
+.PARAMETER VerboseProgress
+    Ativa modo verbose com progresso detalhado em tempo real.
+    Mostra barra de progresso, contadores por container, throughput (blobs/s),
+    tempo estimado restante (ETA) e log de cada blob analisado.
+    Ideal para acompanhar Storage Accounts muito grandes.
+
 .PARAMETER MaxDaysExpired
     Filtra apenas blobs cuja imutabilidade expirou há mais de N dias.
 
@@ -61,8 +67,12 @@
     .\Remove-ExpiredImmutableBlobs.ps1 -RemoveImmutabilityPolicyOnly -MaxDaysExpired 30
     Remove apenas políticas de imutabilidade vencidas há mais de 30 dias.
 
+.EXAMPLE
+    .\Remove-ExpiredImmutableBlobs.ps1 -StorageAccountName "mystorageaccount" -VerboseProgress
+    Executa com progresso detalhado em tempo real para acompanhar Storage Accounts grandes.
+
 .NOTES
-    Versão: 1.0.0
+    Versão: 1.1.0
     Autor: M365 Security Toolkit
     Requer: Az.Storage, Az.Accounts (PowerShell 7.0+)
     Licença: MIT
@@ -104,6 +114,9 @@ param(
     [switch]$IncludeSoftDeleted,
 
     [Parameter()]
+    [switch]$VerboseProgress,
+
+    [Parameter()]
     [int]$MaxDaysExpired = 0
 )
 
@@ -112,7 +125,7 @@ param(
 # ============================================================================
 
 $ErrorActionPreference = "Stop"
-$script:ScriptVersion = "1.0.0"
+$script:ScriptVersion = "1.1.0"
 $script:StartTime = Get-Date
 $script:Now = [DateTimeOffset]::UtcNow
 
@@ -129,6 +142,7 @@ $script:Stats = @{
     PoliciesRemoved        = 0
     Errors                 = 0
     BytesEligible          = 0
+    BytesScanned           = 0
 }
 
 # Resultados para relatório
@@ -173,6 +187,71 @@ function Format-FileSize {
     if ($Bytes -ge 1MB) { return "{0:N2} MB" -f ($Bytes / 1MB) }
     if ($Bytes -ge 1KB) { return "{0:N2} KB" -f ($Bytes / 1KB) }
     return "$Bytes Bytes"
+}
+
+function Write-VerboseLog {
+    param(
+        [string]$Message,
+        [string]$Level = "INFO"
+    )
+    if ($VerboseProgress) {
+        Write-Log $Message $Level
+    }
+}
+
+function Show-Progress {
+    param(
+        [string]$Activity,
+        [string]$Status,
+        [int]$PercentComplete = -1,
+        [string]$CurrentOperation = ""
+    )
+    if (-not $VerboseProgress) { return }
+
+    $params = @{
+        Activity = $Activity
+        Status   = $Status
+    }
+    if ($PercentComplete -ge 0) {
+        $params['PercentComplete'] = [math]::Min($PercentComplete, 100)
+    }
+    if ($CurrentOperation) {
+        $params['CurrentOperation'] = $CurrentOperation
+    }
+    Write-Progress @params
+}
+
+function Get-ElapsedFormatted {
+    param([datetime]$Since)
+    $elapsed = (Get-Date) - $Since
+    return "{0:hh\:mm\:ss}" -f $elapsed
+}
+
+function Get-Throughput {
+    param(
+        [int]$Count,
+        [datetime]$Since
+    )
+    $elapsed = ((Get-Date) - $Since).TotalSeconds
+    if ($elapsed -le 0) { return "--" }
+    $rate = [math]::Round($Count / $elapsed, 1)
+    return "$rate/s"
+}
+
+function Get-ETA {
+    param(
+        [int]$Processed,
+        [int]$Total,
+        [datetime]$Since
+    )
+    if ($Processed -le 0 -or $Total -le 0) { return "calculando..." }
+    $elapsed = ((Get-Date) - $Since).TotalSeconds
+    if ($elapsed -le 0) { return "calculando..." }
+    $rate = $Processed / $elapsed
+    $remaining = ($Total - $Processed) / $rate
+    if ($remaining -lt 60) { return "{0:N0}s" -f $remaining }
+    if ($remaining -lt 3600) { return "{0:N0}min {1:N0}s" -f [math]::Floor($remaining / 60), ($remaining % 60) }
+    return "{0:N0}h {1:N0}min" -f [math]::Floor($remaining / 3600), [math]::Floor(($remaining % 3600) / 60)
 }
 
 function Test-AzureConnection {
@@ -707,6 +786,10 @@ function Start-ImmutabilityAudit {
 
     Write-Log "Modo de operação: $mode" "SECTION"
 
+    if ($VerboseProgress) {
+        Write-Log "Modo verbose ATIVADO - progresso detalhado em tempo real" "INFO"
+    }
+
     if ($MaxDaysExpired -gt 0) {
         Write-Log "Filtro: apenas blobs expirados há mais de $MaxDaysExpired dias" "INFO"
     }
@@ -745,12 +828,21 @@ function Start-ImmutabilityAudit {
     }
 
     # Processar cada Storage Account
+    $totalAccounts = @($storageAccounts).Count
+    $accountIndex = 0
+
     foreach ($account in $storageAccounts) {
         $script:Stats.StorageAccountsScanned++
+        $accountIndex++
         $accountName = $account.StorageAccountName
         $accountRG = $account.ResourceGroupName
+        $accountStartTime = Get-Date
 
         Write-Log "Processando Storage Account: $accountName (RG: $accountRG)" "SECTION"
+        Show-Progress -Activity "Analisando Storage Accounts" `
+            -Status "[$accountIndex/$totalAccounts] $accountName" `
+            -PercentComplete (($accountIndex - 1) / $totalAccounts * 100) `
+            -CurrentOperation "Iniciando análise..."
 
         try {
             # Obter contexto de storage
@@ -768,8 +860,23 @@ function Start-ImmutabilityAudit {
                 -StorageContext $storageContext
 
             # Processar blobs em cada container
+            $totalContainers = @($containersToProcess).Count
+            $containerIndex = 0
+
             foreach ($containerNameItem in $containersToProcess) {
+                $containerIndex++
+                $containerStartTime = Get-Date
+                $containerBlobCount = 0
+                $containerExpiredCount = 0
+                $containerBytesScanned = 0
+
                 Write-Log "  Analisando blobs no container: $containerNameItem" "INFO"
+                Write-VerboseLog "  Container [$containerIndex/$totalContainers]: $containerNameItem" "INFO"
+
+                Show-Progress -Activity "Analisando Storage Accounts" `
+                    -Status "[$accountIndex/$totalAccounts] $accountName" `
+                    -PercentComplete (($accountIndex - 1) / $totalAccounts * 100) `
+                    -CurrentOperation "Container [$containerIndex/$totalContainers]: $containerNameItem - Listando blobs..."
 
                 try {
                     $blobParams = @{
@@ -784,15 +891,51 @@ function Start-ImmutabilityAudit {
                     # Incluir versões para version-level immutability
                     $blobParams['IncludeVersion'] = $true
 
-                    $blobs = Get-AzStorageBlob @blobParams
+                    $blobs = @(Get-AzStorageBlob @blobParams)
+                    $totalBlobs = $blobs.Count
 
+                    Write-VerboseLog "  Container '$containerNameItem': $totalBlobs blob(s) encontrado(s)" "INFO"
+
+                    $blobIndex = 0
                     foreach ($blob in $blobs) {
                         $script:Stats.BlobsScanned++
+                        $script:Stats.BytesScanned += $blob.Length
+                        $blobIndex++
+                        $containerBlobCount++
+                        $containerBytesScanned += $blob.Length
+
+                        # Atualizar barra de progresso a cada 50 blobs ou no primeiro
+                        if ($VerboseProgress -and ($blobIndex % 50 -eq 0 -or $blobIndex -eq 1 -or $blobIndex -eq $totalBlobs)) {
+                            $pct = if ($totalBlobs -gt 0) { [math]::Floor($blobIndex / $totalBlobs * 100) } else { 0 }
+                            $throughput = Get-Throughput -Count $blobIndex -Since $containerStartTime
+                            $eta = Get-ETA -Processed $blobIndex -Total $totalBlobs -Since $containerStartTime
+                            $elapsed = Get-ElapsedFormatted -Since $containerStartTime
+
+                            Show-Progress -Activity "Analisando Storage Accounts" `
+                                -Status "[$accountIndex/$totalAccounts] $accountName | Container [$containerIndex/$totalContainers]: $containerNameItem" `
+                                -PercentComplete $pct `
+                                -CurrentOperation "Blob $blobIndex/$totalBlobs | $throughput | Elapsed: $elapsed | ETA: $eta | Expirados: $containerExpiredCount | Tamanho: $(Format-FileSize $containerBytesScanned)"
+                        }
 
                         $blobResult = Test-BlobImmutabilityExpired `
                             -Blob $blob `
                             -AccountName $accountName `
                             -ContainerNameLocal $containerNameItem
+
+                        # Log verbose de cada blob com política
+                        if ($VerboseProgress -and $blobResult.Status -ne "NoPolicy") {
+                            $statusIcon = switch ($blobResult.Status) {
+                                "Expired" { "EXPIRED" }
+                                "Active"  { "ACTIVE" }
+                                default   { $blobResult.Status }
+                            }
+                            $blobShortName = if ($blob.Name.Length -gt 80) { $blob.Name.Substring(0,77) + "..." } else { $blob.Name }
+                            Write-VerboseLog "    [$statusIcon] $blobShortName ($(Format-FileSize $blob.Length))$(if ($blobResult.DaysExpired -gt 0) { " | Expirado há $($blobResult.DaysExpired) dias" })" $(if ($blobResult.Status -eq "Expired") { "WARN" } else { "INFO" })
+                        }
+
+                        if ($blobResult.Status -eq "Expired") {
+                            $containerExpiredCount++
+                        }
 
                         # Executar ação se elegível
                         if ($blobResult.Eligible) {
@@ -804,17 +947,35 @@ function Start-ImmutabilityAudit {
                             $script:Results.Add($blobResult)
                         }
                     }
+
+                    # Resumo do container (verbose)
+                    if ($VerboseProgress) {
+                        $containerDuration = (Get-Date) - $containerStartTime
+                        $throughputFinal = Get-Throughput -Count $containerBlobCount -Since $containerStartTime
+                        Write-Log "  Resumo '$containerNameItem': $containerBlobCount blobs | $(Format-FileSize $containerBytesScanned) | $containerExpiredCount expirado(s) | $throughputFinal | Dur: $($containerDuration.ToString('hh\:mm\:ss'))" "INFO"
+                    }
                 }
                 catch {
                     Write-Log "  Erro ao processar container '$containerNameItem': $($_.Exception.Message)" "ERROR"
                     $script:Stats.Errors++
                 }
             }
+
+            # Resumo da Storage Account (verbose)
+            if ($VerboseProgress) {
+                $accountDuration = (Get-Date) - $accountStartTime
+                Write-Log "Resumo '$accountName': $($script:Stats.BlobsScanned) blobs total | $(Format-FileSize $script:Stats.BytesScanned) | Dur: $($accountDuration.ToString('hh\:mm\:ss'))" "SUCCESS"
+            }
         }
         catch {
             Write-Log "Erro ao processar Storage Account '$accountName': $($_.Exception.Message)" "ERROR"
             $script:Stats.Errors++
         }
+    }
+
+    # Limpar barra de progresso
+    if ($VerboseProgress) {
+        Write-Progress -Activity "Analisando Storage Accounts" -Completed
     }
 
     # Gerar relatórios
@@ -842,6 +1003,7 @@ function Start-ImmutabilityAudit {
     Write-Log "Blobs com imutab. vencida:   $($script:Stats.BlobsWithExpiredPolicy)" $(if ($script:Stats.BlobsWithExpiredPolicy -gt 0) { "WARN" } else { "SUCCESS" })
     Write-Log "Blobs com imutab. ativa:     $($script:Stats.BlobsWithActivePolicy)" "SUCCESS"
     Write-Log "Blobs com Legal Hold:        $($script:Stats.BlobsWithLegalHold)" $(if ($script:Stats.BlobsWithLegalHold -gt 0) { "WARN" } else { "INFO" })
+    Write-Log "Total analisado (bytes):     $(Format-FileSize $script:Stats.BytesScanned)" "INFO"
     Write-Log "Espaço elegível p/ remoção:  $(Format-FileSize $script:Stats.BytesEligible)" "INFO"
 
     if ($RemoveBlobs) {
