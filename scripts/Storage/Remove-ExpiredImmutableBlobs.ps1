@@ -244,7 +244,7 @@ if ($modeRemove -or $modePolicyOnly) {
 
         Write-Host ""
         Write-Host "  ╔══════════════════════════════════════════════════════════╗" -ForegroundColor Red
-        Write-Host "  ║  ATENÇÃO: MODO DESTRUTIVO — $($modeLabel.PadRight(28))║" -ForegroundColor Red
+        Write-Host "  ║  ATENÇÃO: MODO DESTRUTIVO — $($modeLabel.PadRight(28)) ║" -ForegroundColor Red
         Write-Host "  ╚══════════════════════════════════════════════════════════╝" -ForegroundColor Red
         Write-Host ""
         $confirm = Read-Host "  Digite 'CONFIRMAR' para prosseguir"
