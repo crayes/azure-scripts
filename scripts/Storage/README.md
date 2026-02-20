@@ -84,6 +84,13 @@ O script gera um relatório HTML com um dashboard interativo, resumo das estatí
 
 ## Changelog
 
+### v1.4.1 (20/02/2026)
+- 🐛 **CORREÇÃO CRÍTICA**: Resolvido problema de estouro de memória em containers grandes
+  - Reimplementada paginação correta com lotes de 5000 blobs por página
+  - Usa `ContinuationToken` corretamente para processar containers de 10TB+ sem estouro de memória
+  - Mantém arquitetura de 3 fases: (1) Coleta paginada, (2) Análise, (3) Ações
+  - Evita tanto loop infinito quanto carregamento completo na memória
+
 ### v1.4.0 (20/02/2026)
 - 🐛 **CORREÇÃO CRÍTICA**: Resolvido problema de loop infinito ao usar `-RemoveBlobs`
   - O script agora coleta todos os blobs primeiro, depois executa as ações

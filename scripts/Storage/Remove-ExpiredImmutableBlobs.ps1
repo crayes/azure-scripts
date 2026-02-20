@@ -48,8 +48,8 @@
     e log de cada blob analisado.
     Ideal para acompanhar Storage Accounts muito grandes (10TB+).
     
-    IMPORTANTE: O script coleta TODOS os blobs primeiro e depois executa as ações.
-    Isso evita loops infinitos ao remover blobs durante a iteração.
+    IMPORTANTE: O script usa paginação (5000 blobs por página) para evitar estouro de memória.
+    Coleta TODOS os blobs primeiro, depois executa as ações (evita loop infinito).
 
 .PARAMETER MaxDaysExpired
     Filtra apenas blobs cuja imutabilidade expirou há mais de N dias.
@@ -83,10 +83,15 @@
     Remove blobs elegíveis apenas em Storage Accounts com 10 TB ou mais de volume analisado.
 
 .NOTES
-    Versão: 1.4.0
+    Versão: 1.4.1
     Autor: M365 Security Toolkit
     Requer: Az.Storage, Az.Accounts (PowerShell 7.0+)
     Licença: MIT
+    
+    Changelog v1.4.1:
+    - Corrigido problema de carregamento completo na memória
+    - Reimplementada paginação correta (5000 blobs por página) usando ContinuationToken
+    - Mantém arquitetura de 3 fases para evitar loop infinito
     
     Changelog v1.4.0:
     - Corrigido loop infinito ao remover blobs (coleta todos os blobs primeiro, executa ações depois)
@@ -140,7 +145,7 @@ param(
     [int]$MinAccountSizeTB = 0
 )
 
-# ============================================================================
+# ===========================1================================================
 # CONFIGURAÇÃO E CONSTANTES
 # ============================================================================
 
@@ -910,6 +915,7 @@ function Start-ImmutabilityAudit {
                     $blobParams = @{
                         Container = $containerNameItem
                         Context   = $storageContext
+                        MaxCount  = 5000
                     }
 
                     if ($IncludeSoftDeleted) {
@@ -919,31 +925,64 @@ function Start-ImmutabilityAudit {
                     # Incluir versões para version-level immutability
                     $blobParams['IncludeVersion'] = $true
 
-                    # FASE 1: Coletar todos os blobs que precisam de ação
-                    # Importante: Não removemos durante a iteração para evitar loop infinito
-                    Write-VerboseLog "  Container '$containerNameItem': Coletando lista de blobs..." "INFO"
+                    # FASE 1: Coletar todos os blobs usando paginação (evita estouro de memória)
+                    # Importante: Coletamos TODOS os blobs primeiro, removemos DEPOIS (evita loop infinito)
+                    Write-VerboseLog "  Container '$containerNameItem': Iniciando coleta paginada de blobs..." "INFO"
                     
-                    $blobIndex = 0
-                    $allBlobs = @()
+                    $allBlobsCollected = [System.Collections.Generic.List[Microsoft.WindowsAzure.Commands.Common.Storage.ResourceModel.AzureStorageBlob]]::new()
+                    $continuationToken = $null
+                    $pageNumber = 0
                     
-                    try {
-                        # Obter todos os blobs do container (paginação automática pelo cmdlet)
-                        $allBlobs = Get-AzStorageBlob @blobParams
-                        $blobIndex = @($allBlobs).Count
+                    do {
+                        $pageNumber++
                         
-                        Write-VerboseLog "  Container '$containerNameItem': $blobIndex blob(s) encontrado(s)" "INFO"
-                    }
-                    catch {
-                        Write-Log "  Erro ao listar blobs do container '$containerNameItem': $($_.Exception.Message)" "ERROR"
-                        $script:Stats.Errors++
-                        continue
-                    }
+                        # Adicionar ContinuationToken se houver
+                        if ($null -ne $continuationToken) {
+                            $blobParams['ContinuationToken'] = $continuationToken
+                        }
+                        else {
+                            $blobParams.Remove('ContinuationToken')
+                        }
 
-                    # FASE 2: Processar e coletar blobs elegíveis
+                        Write-VerboseLog "  Carregando página $pageNumber (até 5000 blobs)..." "INFO"
+                        
+                        # Buscar próxima página de blobs
+                        $blobPage = Get-AzStorageBlob @blobParams
+                        
+                        if ($null -ne $blobPage) {
+                            # Adicionar blobs da página à coleção total
+                            $pageBlobs = @($blobPage)
+                            foreach ($blob in $pageBlobs) {
+                                $allBlobsCollected.Add($blob)
+                            }
+                            
+                            Write-VerboseLog "  Página $pageNumber: $($pageBlobs.Count) blob(s) | Total acumulado: $($allBlobsCollected.Count)" "INFO"
+                            
+                            # Obter token de continuação para próxima página
+                            # O token está no último blob da página
+                            if ($pageBlobs.Count -gt 0) {
+                                $lastBlob = $pageBlobs[-1]
+                                $continuationToken = $lastBlob.ContinuationToken
+                            }
+                            else {
+                                $continuationToken = $null
+                            }
+                        }
+                        else {
+                            # Nenhum blob retornado
+                            $continuationToken = $null
+                        }
+                        
+                    } while ($null -ne $continuationToken)
+
+                    $blobIndex = $allBlobsCollected.Count
+                    Write-VerboseLog "  Container '$containerNameItem': $blobIndex blob(s) coletado(s) em $pageNumber página(s)" "SUCCESS"
+
+                    # FASE 2: Processar e identificar blobs elegíveis para ação
                     $blobsToProcess = [System.Collections.Generic.List[PSCustomObject]]::new()
                     $processIndex = 0
 
-                    foreach ($blob in $allBlobs) {
+                    foreach ($blob in $allBlobsCollected) {
                         $processIndex++
                         $script:Stats.BlobsScanned++
                         $script:Stats.BytesScanned += $blob.Length
