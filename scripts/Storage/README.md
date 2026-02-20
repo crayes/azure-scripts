@@ -1,109 +1,111 @@
-# Remove-ExpiredImmutableBlobs v2.0.0
+# Scripts de Azure Storage
+
+Este diretório contém scripts PowerShell para gerenciamento e auditoria de Azure Storage.
+
+## Remove-ExpiredImmutableBlobs.ps1
 
 Avalia e remove blobs com políticas de imutabilidade (WORM) vencidas em Azure Blob Storage.
 
-## Estrutura
+### Visão Geral
 
-```
-storage/
-├── Remove-ExpiredImmutableBlobs.ps1   # Script principal
-├── README.md
-└── lib/
-    ├── Helpers.ps1          # Logging, formatação, progresso, conexão Azure
-    ├── AzureDiscovery.ps1   # Descoberta de Storage Accounts e containers
-    ├── BlobPagination.ps1   # Listagem paginada (lotes de 5000) — CORREÇÃO CRÍTICA
-    ├── BlobAnalysis.ps1     # Análise de imutabilidade + ações (delete/policy) — CORREÇÃO CRÍTICA
-    └── Reports.ps1          # Geração de relatórios HTML e CSV
-```
+Políticas de imutabilidade são essenciais para compliance (SEC 17a-4, etc.), mas blobs com políticas expiradas podem consumir custos desnecessários. Este script automatiza a identificação e limpeza desses blobs, suportando tanto políticas a nível de container quanto a nível de versão (blob individual).
 
-## Changelog v2.0.0 — Refatoração Completa
+### Funcionalidades
 
-### 🔴 Correções Críticas
+- **Análise Abrangente**: Varre subscriptions, resource groups ou storage accounts específicas.
+- **Dois Tipos de Imutabilidade**: Suporta políticas de contêiner (time-based) e de versão de blob.
+- **Legal Hold**: Identifica e reporta blobs sob Legal Hold, que não são removidos automaticamente.
+- **Remoção (Padrão)**: Remove blobs com imutabilidade vencida por padrão (com confirmação explícita).
+- **Modo Simulação (`-DryRun`)**: Permite visualizar quais blobs seriam removidos sem executar nenhuma ação destrutiva.
+- **Remoção de Política**: Permite remover apenas a política de imutabilidade com `-RemoveImmutabilityPolicyOnly`, mantendo o blob.
+- **Filtro para Grandes Volumes**: Permite executar ações destrutivas somente em contas com volume analisado acima de um limiar (ex: `10TB+`) usando `-MinAccountSizeTB`.
+- **Relatórios Detalhados**: Gera um relatório em HTML interativo e um CSV com os resultados da análise.
 
-| Bug | Problema | Correção |
-|-----|----------|----------|
-| **Paginação** | `ContinuationToken` se perdia ao fazer `@($output)`, script processava só 1 página (5000 blobs) | Token capturado do output RAW antes de transformar em array. Parâmetro só adicionado quando não-null |
-| **Deleção** | `Remove-AzStorageBlob` sem `-VersionId` falhava silenciosamente para blobs versionados | `VersionId` propagado no pipeline inteiro: coleta → análise → ação. Passado para `Remove-AzStorageBlob` e `Remove-AzStorageBlobImmutabilityPolicy` |
-| **Política Locked** | Script pulava `Remove-AzStorageBlobImmutabilityPolicy` para políticas "Locked" (mesmo expiradas) | Remoção de política para AMBOS modos (Locked e Unlocked) quando expirada, antes de deletar o blob |
+### Como Usar
 
-### 🟡 Correções Importantes
+1. **Conecte-se ao Azure**:
+   ```powershell
+   Connect-AzAccount
+   ```
 
-| Bug | Correção |
-|-----|----------|
-| `ShouldProcess` aninhado | Removido de `Invoke-BlobAction` — controle centralizado via `$script:DryRun`/`$script:RemoveBlobs` |
-| `$script:MaxDaysExpired` | Todos os parâmetros copiados explicitamente para `$script:` scope |
-| Modo padrão | Revertido para **DryRun** (v1.4 mudava para RemoveBlobs sem switch) |
+2. **Execução em Modo Padrão (Remove Blobs)**:
+   **Atenção**: Esta ação é destrutiva. O script pedirá uma confirmação manual.
+   ```powershell
+   .\Remove-ExpiredImmutableBlobs.ps1
+   ```
 
-### 🟢 Melhorias
+3. **Simulação em um Storage Account Específico**:
+   ```powershell
+   .\Remove-ExpiredImmutableBlobs.ps1 -StorageAccountName "seu-storage-account" -DryRun
+   ```
 
-- Script modularizado em 5 arquivos para manutenção
-- `ErrorDetails` com contexto: `[RemoveBlob(arquivo.vhd)] mensagem de erro`
-- Relatório HTML inclui coluna VersionId e bytes removidos
-- `PageSize` configurável via parâmetro (100-5000)
-- Contador de páginas processadas no resumo e relatório
-- `BytesRemoved` rastreado separadamente
+4. **Remover Blobs com Imutabilidade Vencida (Explícito)**:
+   **Atenção**: Esta ação é destrutiva. O script pedirá uma confirmação manual.
+   ```powershell
+   .\Remove-ExpiredImmutableBlobs.ps1 -StorageAccountName "seu-storage-account" -RemoveBlobs
+   ```
 
-## Como Usar
+5. **Remover Apenas a Política de Imutabilidade**:
+   Mantém o blob, mas remove a trava de imutabilidade expirada.
+   ```powershell
+   .\Remove-ExpiredImmutableBlobs.ps1 -ContainerName "meu-container" -RemoveImmutabilityPolicyOnly
+   ```
 
-```powershell
-# Conectar ao Azure
-Connect-AzAccount
+6. **Remoção em contas grandes (10TB+)**:
+   Executa remoção apenas em Storage Accounts com pelo menos 10 TB analisados.
+   ```powershell
+   .\Remove-ExpiredImmutableBlobs.ps1 -RemoveBlobs -MinAccountSizeTB 10
+   ```
 
-# DryRun (padrão) — lista blobs elegíveis sem remover
-.\Remove-ExpiredImmutableBlobs.ps1 -StorageAccountName "rfaabackup3"
+### Parâmetros Principais
 
-# DryRun com verbose (para containers grandes)
-.\Remove-ExpiredImmutableBlobs.ps1 -StorageAccountName "rfaabackup3" -VerboseProgress
+| Parâmetro                      | Descrição                                                                       |
+|-------------------------------|---------------------------------------------------------------------------------|
+| `-SubscriptionId`             | ID da subscription a ser analisada.                                             |
+| `-ResourceGroupName`          | Nome do Resource Group para filtrar a análise.                                  |
+| `-StorageAccountName`         | Nome do Storage Account para filtrar a análise.                                 |
+| `-ContainerName`              | Nome do container para filtrar a análise.                                       |
+| `-DryRun`                     | Modo de simulação que não remove nada.                                          |
+| `-RemoveBlobs`                | Ativa o modo de remoção de blobs. **Requer confirmação explícita.**             |
+| `-RemoveImmutabilityPolicyOnly` | Ativa o modo que remove apenas a política, mantendo o blob.                    |
+| `-OutputPath`                 | Pasta para salvar os relatórios (padrão: `./Reports`).                           |
+| `-ExportCsv`                  | Gera um relatório adicional em formato CSV.                                     |
+| `-VerboseProgress`            | Ativa modo verbose com progresso detalhado, throughput e ETA em tempo real.     |
+| `-MaxDaysExpired`             | Filtra para remover apenas blobs expirados há mais de `N` dias.                  |
+| `-MinAccountSizeTB`           | Em modo destrutivo, executa ação apenas em contas com volume analisado >= `N` TB.|
 
-# Remover blobs (pede confirmação)
-.\Remove-ExpiredImmutableBlobs.ps1 -StorageAccountName "rfaabackup3" -RemoveBlobs
+### Exemplo de Relatório HTML
 
-# Remover apenas políticas (mantém blob)
-.\Remove-ExpiredImmutableBlobs.ps1 -StorageAccountName "rfaabackup3" -RemoveImmutabilityPolicyOnly
+O script gera um relatório HTML com um dashboard interativo, resumo das estatísticas e tabelas detalhadas dos blobs encontrados.
 
-# Filtrar por dias expirados e gerar CSV
-.\Remove-ExpiredImmutableBlobs.ps1 -RemoveBlobs -MaxDaysExpired 30 -ExportCsv
+![Exemplo de Relatório](https://i.imgur.com/exemplo-relatorio.png) <!--- Placeholder for a real image -->
 
-# Threshold: só agir em contas com 10TB+
-.\Remove-ExpiredImmutableBlobs.ps1 -RemoveBlobs -MinAccountSizeTB 10
+---
 
-# Page size customizado
-.\Remove-ExpiredImmutableBlobs.ps1 -StorageAccountName "rfaabackup3" -PageSize 2000 -VerboseProgress
-```
+## Changelog
 
-## Parâmetros
+### v1.4.2 (20/02/2026)
+- ✨ **ALTERAÇÃO DE COMPORTAMENTO**: Modo padrão agora remove blobs (com confirmação).
+- 🐛 **CORREÇÃO**: Modo verbose e switches agora inicializam corretamente.
+- 🐛 **CORREÇÃO**: Processamento paginado por página para evitar estouro de memória em contas grandes.
 
-| Parâmetro | Descrição | Padrão |
-|-----------|-----------|--------|
-| `-SubscriptionId` | ID da subscription Azure | Atual |
-| `-ResourceGroupName` | Filtrar por Resource Group | Todos |
-| `-StorageAccountName` | Filtrar por Storage Account | Todos |
-| `-ContainerName` | Filtrar por container | Todos |
-| `-DryRun` | Simulação (padrão) | ✅ |
-| `-RemoveBlobs` | Remove blobs elegíveis | - |
-| `-RemoveImmutabilityPolicyOnly` | Remove só a política | - |
-| `-OutputPath` | Pasta dos relatórios | `./Reports` |
-| `-ExportCsv` | Gera CSV adicional | - |
-| `-IncludeSoftDeleted` | Incluir soft-deleted | - |
-| `-VerboseProgress` | Progresso detalhado | - |
-| `-MaxDaysExpired` | Filtro mínimo de dias expirados | 0 (todos) |
-| `-MinAccountSizeTB` | Threshold de tamanho para ação | 0 (todos) |
-| `-PageSize` | Blobs por página (100-5000) | 5000 |
+### v1.4.1 (20/02/2026)
+- 🐛 **CORREÇÃO CRÍTICA**: Resolvido problema de estouro de memória em containers grandes
+  - Reimplementada paginação correta com lotes de 5000 blobs por página
+  - Usa `ContinuationToken` corretamente para processar containers de 10TB+ sem estouro de memória
+  - Mantém arquitetura de 3 fases: (1) Coleta paginada, (2) Análise, (3) Ações
+  - Evita tanto loop infinito quanto carregamento completo na memória
 
-## Fluxo de Execução
+### v1.4.0 (20/02/2026)
+- 🐛 **CORREÇÃO CRÍTICA**: Resolvido problema de loop infinito ao usar `-RemoveBlobs`
+  - O script agora coleta todos os blobs primeiro, depois executa as ações
+  - Evita modificar o container durante a iteração
+- 🐛 **CORREÇÃO**: Modo verbose (`-VerboseProgress`) agora funciona corretamente
+  - Corrigido escopo de variáveis dentro das funções
+  - Todas as mensagens de log e barras de progresso agora aparecem quando o modo está ativo
+- ✨ Melhorada barra de progresso com percentual real de conclusão
+- 📝 Removida referência a paginação manual que causava problemas
 
-```
-1. Conexão Azure
-2. Descoberta de Storage Accounts e Containers
-3. Para cada container:
-   a. FASE 1 — Listagem paginada (lotes de PageSize)
-      └── Get-BlobsPaginated com ContinuationToken
-   b. FASE 2 — Análise blob a blob
-      └── Test-BlobImmutabilityExpired (inclui VersionId)
-   c. FASE 3 — Ações (se não DryRun)
-      └── Invoke-BlobAction:
-          1. Remove-AzStorageBlobImmutabilityPolicy (com -VersionId)
-          2. Remove-AzStorageBlob (com -VersionId e -Force)
-4. Threshold check (MinAccountSizeTB)
-5. Relatórios HTML + CSV
-```
+### v1.3.0
+- Adicionado suporte a `-MinAccountSizeTB` para filtrar por volume
+- Modo verbose aprimorado com throughput e ETA
