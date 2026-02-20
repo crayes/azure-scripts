@@ -80,3 +80,18 @@ O script gera um relatório HTML com um dashboard interativo, resumo das estatí
 
 ![Exemplo de Relatório](https://i.imgur.com/exemplo-relatorio.png) <!--- Placeholder for a real image -->
 
+---
+
+## Changelog
+
+### v1.4.0 (20/02/2026)
+- 🐛 **CORREÇÃO CRÍTICA**: Resolvido problema de loop infinito ao usar `-RemoveBlobs`
+  - O script agora coleta todos os blobs primeiro, depois executa as ações
+  - Evita modificar o container durante a iteração
+- ✨ Melhorada barra de progresso com percentual real de conclusão
+- 📝 Removida referência a paginação manual que causava problemas
+
+### v1.3.0
+- Adicionado suporte a `-MinAccountSizeTB` para filtrar por volume
+- Modo verbose aprimorado com throughput e ETA
+
