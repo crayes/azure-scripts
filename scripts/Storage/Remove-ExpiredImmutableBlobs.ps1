@@ -45,8 +45,9 @@
 .PARAMETER VerboseProgress
     Ativa modo verbose com progresso detalhado em tempo real.
     Mostra barra de progresso, contadores por container, throughput (blobs/s),
-    tempo estimado restante (ETA) e log de cada blob analisado.
-    Ideal para acompanhar Storage Accounts muito grandes.
+    número de páginas processadas e log de cada blob analisado.
+    Ideal para acompanhar Storage Accounts muito grandes (10TB+).
+    Usa listagem paginada (5000 blobs/página) para evitar consumo excessivo de memória.
 
 .PARAMETER MaxDaysExpired
     Filtra apenas blobs cuja imutabilidade expirou há mais de N dias.
@@ -72,7 +73,7 @@
     Executa com progresso detalhado em tempo real para acompanhar Storage Accounts grandes.
 
 .NOTES
-    Versão: 1.1.0
+    Versão: 1.2.0
     Autor: M365 Security Toolkit
     Requer: Az.Storage, Az.Accounts (PowerShell 7.0+)
     Licença: MIT
@@ -125,7 +126,7 @@ param(
 # ============================================================================
 
 $ErrorActionPreference = "Stop"
-$script:ScriptVersion = "1.1.0"
+$script:ScriptVersion = "1.2.0"
 $script:StartTime = Get-Date
 $script:Now = [DateTimeOffset]::UtcNow
 
@@ -882,6 +883,7 @@ function Start-ImmutabilityAudit {
                     $blobParams = @{
                         Container = $containerNameItem
                         Context   = $storageContext
+                        MaxCount  = 5000
                     }
 
                     if ($IncludeSoftDeleted) {
@@ -891,62 +893,85 @@ function Start-ImmutabilityAudit {
                     # Incluir versões para version-level immutability
                     $blobParams['IncludeVersion'] = $true
 
-                    $blobs = @(Get-AzStorageBlob @blobParams)
-                    $totalBlobs = $blobs.Count
-
-                    Write-VerboseLog "  Container '$containerNameItem': $totalBlobs blob(s) encontrado(s)" "INFO"
-
+                    # Processamento paginado com ContinuationToken
+                    # Evita carregar todos os blobs na memória de uma vez (crítico para containers 10TB+)
+                    $continuationToken = $null
                     $blobIndex = 0
-                    foreach ($blob in $blobs) {
-                        $script:Stats.BlobsScanned++
-                        $script:Stats.BytesScanned += $blob.Length
-                        $blobIndex++
-                        $containerBlobCount++
-                        $containerBytesScanned += $blob.Length
+                    $pageNumber = 0
 
-                        # Atualizar barra de progresso a cada 50 blobs ou no primeiro
-                        if ($VerboseProgress -and ($blobIndex % 50 -eq 0 -or $blobIndex -eq 1 -or $blobIndex -eq $totalBlobs)) {
-                            $pct = if ($totalBlobs -gt 0) { [math]::Floor($blobIndex / $totalBlobs * 100) } else { 0 }
-                            $throughput = Get-Throughput -Count $blobIndex -Since $containerStartTime
-                            $eta = Get-ETA -Processed $blobIndex -Total $totalBlobs -Since $containerStartTime
-                            $elapsed = Get-ElapsedFormatted -Since $containerStartTime
+                    Write-VerboseLog "  Container '$containerNameItem': Iniciando listagem paginada (5000 blobs/página)..." "INFO"
 
-                            Show-Progress -Activity "Analisando Storage Accounts" `
-                                -Status "[$accountIndex/$totalAccounts] $accountName | Container [$containerIndex/$totalContainers]: $containerNameItem" `
-                                -PercentComplete $pct `
-                                -CurrentOperation "Blob $blobIndex/$totalBlobs | $throughput | Elapsed: $elapsed | ETA: $eta | Expirados: $containerExpiredCount | Tamanho: $(Format-FileSize $containerBytesScanned)"
+                    do {
+                        $pageNumber++
+                        if ($null -ne $continuationToken) {
+                            $blobParams['ContinuationToken'] = $continuationToken
                         }
 
-                        $blobResult = Test-BlobImmutabilityExpired `
-                            -Blob $blob `
-                            -AccountName $accountName `
-                            -ContainerNameLocal $containerNameItem
+                        # Buscar próxima página de blobs
+                        $blobPage = Get-AzStorageBlob @blobParams
 
-                        # Log verbose de cada blob com política
-                        if ($VerboseProgress -and $blobResult.Status -ne "NoPolicy") {
-                            $statusIcon = switch ($blobResult.Status) {
-                                "Expired" { "EXPIRED" }
-                                "Active"  { "ACTIVE" }
-                                default   { $blobResult.Status }
+                        # Extrair token de continuação para próxima página
+                        if ($blobPage.Count -gt 0) {
+                            $continuationToken = $blobPage[-1].ContinuationToken
+                        } else {
+                            $continuationToken = $null
+                        }
+
+                        $pageCount = @($blobPage).Count
+                        Write-VerboseLog "  Página $pageNumber: $pageCount blob(s) recebido(s) | Total acumulado: $($blobIndex + $pageCount)" "INFO"
+
+                        foreach ($blob in $blobPage) {
+                            $script:Stats.BlobsScanned++
+                            $script:Stats.BytesScanned += $blob.Length
+                            $blobIndex++
+                            $containerBlobCount++
+                            $containerBytesScanned += $blob.Length
+
+                            # Atualizar barra de progresso a cada 100 blobs
+                            if ($VerboseProgress -and ($blobIndex % 100 -eq 0 -or $blobIndex -eq 1)) {
+                                $throughput = Get-Throughput -Count $blobIndex -Since $containerStartTime
+                                $elapsed = Get-ElapsedFormatted -Since $containerStartTime
+
+                                Show-Progress -Activity "Analisando Storage Accounts" `
+                                    -Status "[$accountIndex/$totalAccounts] $accountName | Container [$containerIndex/$totalContainers]: $containerNameItem" `
+                                    -PercentComplete (-1) `
+                                    -CurrentOperation "Blob $blobIndex (pág. $pageNumber) | $throughput | Elapsed: $elapsed | Expirados: $containerExpiredCount | Tamanho: $(Format-FileSize $containerBytesScanned)"
                             }
-                            $blobShortName = if ($blob.Name.Length -gt 80) { $blob.Name.Substring(0,77) + "..." } else { $blob.Name }
-                            Write-VerboseLog "    [$statusIcon] $blobShortName ($(Format-FileSize $blob.Length))$(if ($blobResult.DaysExpired -gt 0) { " | Expirado há $($blobResult.DaysExpired) dias" })" $(if ($blobResult.Status -eq "Expired") { "WARN" } else { "INFO" })
+
+                            $blobResult = Test-BlobImmutabilityExpired `
+                                -Blob $blob `
+                                -AccountName $accountName `
+                                -ContainerNameLocal $containerNameItem
+
+                            # Log verbose de cada blob com política
+                            if ($VerboseProgress -and $blobResult.Status -ne "NoPolicy") {
+                                $statusIcon = switch ($blobResult.Status) {
+                                    "Expired" { "EXPIRED" }
+                                    "Active"  { "ACTIVE" }
+                                    default   { $blobResult.Status }
+                                }
+                                $blobShortName = if ($blob.Name.Length -gt 80) { $blob.Name.Substring(0,77) + "..." } else { $blob.Name }
+                                Write-VerboseLog "    [$statusIcon] $blobShortName ($(Format-FileSize $blob.Length))$(if ($blobResult.DaysExpired -gt 0) { " | Expirado há $($blobResult.DaysExpired) dias" })" $(if ($blobResult.Status -eq "Expired") { "WARN" } else { "INFO" })
+                            }
+
+                            if ($blobResult.Status -eq "Expired") {
+                                $containerExpiredCount++
+                            }
+
+                            # Executar ação se elegível
+                            if ($blobResult.Eligible) {
+                                Invoke-BlobAction -BlobInfo $blobResult -StorageContext $storageContext
+                            }
+
+                            # Adicionar ao resultado (apenas blobs com política)
+                            if ($blobResult.Status -ne "NoPolicy") {
+                                $script:Results.Add($blobResult)
+                            }
                         }
 
-                        if ($blobResult.Status -eq "Expired") {
-                            $containerExpiredCount++
-                        }
+                    } while ($null -ne $continuationToken)
 
-                        # Executar ação se elegível
-                        if ($blobResult.Eligible) {
-                            Invoke-BlobAction -BlobInfo $blobResult -StorageContext $storageContext
-                        }
-
-                        # Adicionar ao resultado (apenas blobs com política)
-                        if ($blobResult.Status -ne "NoPolicy") {
-                            $script:Results.Add($blobResult)
-                        }
-                    }
+                    Write-VerboseLog "  Container '$containerNameItem': Listagem completa - $containerBlobCount blob(s) em $pageNumber página(s)" "SUCCESS"
 
                     # Resumo do container (verbose)
                     if ($VerboseProgress) {
