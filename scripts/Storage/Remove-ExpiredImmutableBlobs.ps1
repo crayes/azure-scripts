@@ -140,23 +140,36 @@ function Throughput { param([int]$N, [datetime]$Since); $s = ((Get-Date)-$Since)
 
 function AddError { param([string]$Ctx, [string]$Err); $stats.Errors++; $stats.ErrorList.Add("[$Ctx] $Err"); Log "[$Ctx] $Err" "ERROR" }
 
+function Test-BlobNotFoundError {
+    param([string]$Message)
+    if ([string]::IsNullOrWhiteSpace($Message)) { return $false }
+
+    return (
+        $Message -match '(?i)\bBlobNotFound\b' -or
+        $Message -match '(?i)\bStatus:\s*404\b' -or
+        $Message -match '(?i)\bThe specified blob does not exist\b'
+    )
+}
+
 function Test-TransientAzError {
     param([string]$Message)
     if ([string]::IsNullOrWhiteSpace($Message)) { return $false }
 
+    if (Test-BlobNotFoundError -Message $Message) { return $false }
+
     $patterns = @(
-        '429',
-        'TooManyRequests',
-        'ServerBusy',
-        'OperationTimedOut',
-        'timed out',
-        'timeout',
-        'temporar',
-        'InternalServerError',
-        'ServiceUnavailable',
-        'BadGateway',
-        'GatewayTimeout',
-        '5\d\d'
+        '(?i)\bStatus:\s*429\b',
+        '(?i)\bStatus:\s*5\d{2}\b',
+        '(?i)\bTooManyRequests\b',
+        '(?i)\bServerBusy\b',
+        '(?i)\bOperationTimedOut\b',
+        '(?i)\btimed out\b',
+        '(?i)\btimeout\b',
+        '(?i)\btemporar(?:y|ily)\b',
+        '(?i)\bInternalServerError\b',
+        '(?i)\bServiceUnavailable\b',
+        '(?i)\bBadGateway\b',
+        '(?i)\bGatewayTimeout\b'
     )
 
     foreach ($p in $patterns) {
@@ -548,8 +561,15 @@ foreach ($account in $accounts) {
                                 }
                             }
                             catch {
-                                $item.Action = "Error: $($_.Exception.Message)"
-                                AddError "RemovePolicy($($item.Blob))" $_.Exception.Message
+                                $e = $_.Exception.Message
+                                if (Test-BlobNotFoundError -Message $e) {
+                                    $item.Action = "AlreadyDeleted"
+                                    VLog "    [$actionIdx/$($pageEligible.Count)] Já removido: '$($item.Blob)'$vLabel" "DEBUG"
+                                }
+                                else {
+                                    $item.Action = "Error: $e"
+                                    AddError "RemovePolicy($($item.Blob))" $e
+                                }
                             }
                         }
                         elseif ($modeRemove) {
