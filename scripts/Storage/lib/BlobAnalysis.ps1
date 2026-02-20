@@ -154,8 +154,6 @@ function Invoke-BlobAction {
     if ($cfg.RemoveBlobs) {
         try {
             # PASSO 1: Remover política de imutabilidade (expirada)
-            # Para version-level WORM, a política DEVE ser removida antes de deletar,
-            # independente de ser Locked ou Unlocked (desde que expirada)
             if ($null -ne $BlobInfo.ImmutabilityMode) {
                 try {
                     Remove-AzStorageBlobImmutabilityPolicy @policyParams -ErrorAction Stop
@@ -163,7 +161,6 @@ function Invoke-BlobAction {
                 }
                 catch {
                     $errMsg = $_.Exception.Message
-                    # BlobNotFound (404) = versão antiga já removida ou não-current, OK continuar
                     if ($errMsg -match 'BlobNotFound|404|does not exist') {
                         Write-VerboseLog "    [1/2] Política não encontrada (versão já removida?), continuando..." "DEBUG"
                     }
@@ -174,7 +171,6 @@ function Invoke-BlobAction {
             }
 
             # PASSO 2: Deletar o blob
-            # CORREÇÃO CRÍTICA: -VersionId incluído para blobs versionados
             $deleteParams = @{
                 Container = $BlobInfo.Container
                 Blob      = $BlobInfo.BlobName
@@ -195,7 +191,6 @@ function Invoke-BlobAction {
         catch {
             $errMsg = $_.Exception.Message
             if ($errMsg -match 'BlobNotFound|404|does not exist') {
-                # Blob já foi deletado (outra versão ou processo concorrente)
                 $BlobInfo.Action = "AlreadyDeleted"
                 Write-VerboseLog "    SKIP: Blob não encontrado (já removido?): '$($BlobInfo.BlobName)'$vLabel" "DEBUG"
             }
