@@ -918,7 +918,7 @@ function Start-ImmutabilityAudit {
                         }
 
                         $pageCount = @($blobPage).Count
-                        Write-VerboseLog "  Página $pageNumber: $pageCount blob(s) recebido(s) | Total acumulado: $($blobIndex + $pageCount)" "INFO"
+                        Write-VerboseLog "  Pagina ${pageNumber}: $pageCount blob(s) recebido(s) | Total acumulado: $($blobIndex + $pageCount)" "INFO"
 
                         foreach ($blob in $blobPage) {
                             $script:Stats.BlobsScanned++
@@ -935,7 +935,7 @@ function Start-ImmutabilityAudit {
                                 Show-Progress -Activity "Analisando Storage Accounts" `
                                     -Status "[$accountIndex/$totalAccounts] $accountName | Container [$containerIndex/$totalContainers]: $containerNameItem" `
                                     -PercentComplete (-1) `
-                                    -CurrentOperation "Blob $blobIndex (pág. $pageNumber) | $throughput | Elapsed: $elapsed | Expirados: $containerExpiredCount | Tamanho: $(Format-FileSize $containerBytesScanned)"
+                                    -CurrentOperation "Blob $blobIndex (pag. ${pageNumber}) | $throughput | Elapsed: $elapsed | Expirados: $containerExpiredCount | Tamanho: $(Format-FileSize $containerBytesScanned)"
                             }
 
                             $blobResult = Test-BlobImmutabilityExpired `
@@ -971,7 +971,7 @@ function Start-ImmutabilityAudit {
 
                     } while ($null -ne $continuationToken)
 
-                    Write-VerboseLog "  Container '$containerNameItem': Listagem completa - $containerBlobCount blob(s) em $pageNumber página(s)" "SUCCESS"
+                    Write-VerboseLog "  Container '$containerNameItem': Listagem completa - $containerBlobCount blob(s) em ${pageNumber} pagina(s)" "SUCCESS"
 
                     # Resumo do container (verbose)
                     if ($VerboseProgress) {
