@@ -18,6 +18,7 @@ Políticas de imutabilidade são essenciais para compliance (SEC 17a-4, etc.), m
 - **Modo Simulação (`-DryRun`)**: Permite visualizar quais blobs seriam removidos sem executar nenhuma ação destrutiva. É o modo padrão.
 - **Remoção Segura**: Requer o parâmetro `-RemoveBlobs` e uma confirmação explícita para deletar os blobs.
 - **Remoção de Política**: Permite remover apenas a política de imutabilidade com `-RemoveImmutabilityPolicyOnly`, mantendo o blob.
+- **Filtro para Grandes Volumes**: Permite executar ações destrutivas somente em contas com volume analisado acima de um limiar (ex: `10TB+`) usando `-MinAccountSizeTB`.
 - **Relatórios Detalhados**: Gera um relatório em HTML interativo e um CSV com os resultados da análise.
 
 ### Como Usar
@@ -50,6 +51,12 @@ Políticas de imutabilidade são essenciais para compliance (SEC 17a-4, etc.), m
    .\Remove-ExpiredImmutableBlobs.ps1 -ContainerName "meu-container" -RemoveImmutabilityPolicyOnly
    ```
 
+6. **Remoção em contas grandes (10TB+)**:
+   Executa remoção apenas em Storage Accounts com pelo menos 10 TB analisados.
+   ```powershell
+   .\Remove-ExpiredImmutableBlobs.ps1 -RemoveBlobs -MinAccountSizeTB 10
+   ```
+
 ### Parâmetros Principais
 
 | Parâmetro                    | Descrição                                                                      |
@@ -65,6 +72,7 @@ Políticas de imutabilidade são essenciais para compliance (SEC 17a-4, etc.), m
 | `-ExportCsv`                 | Gera um relatório adicional em formato CSV.                                    |
 | `-VerboseProgress`           | Ativa modo verbose com progresso detalhado, throughput e ETA em tempo real.   |
 | `-MaxDaysExpired`            | Filtra para remover apenas blobs expirados há mais de `N` dias.                |
+| `-MinAccountSizeTB`          | Em modo destrutivo, executa ação apenas em contas com volume analisado >= `N` TB. |
 
 ### Exemplo de Relatório HTML
 

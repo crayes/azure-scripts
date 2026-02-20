@@ -52,6 +52,10 @@
 .PARAMETER MaxDaysExpired
     Filtra apenas blobs cuja imutabilidade expirou há mais de N dias.
 
+.PARAMETER MinAccountSizeTB
+    Executa ações destrutivas apenas em Storage Accounts com volume analisado igual ou superior a N TB.
+    Útil para focar em contas grandes (ex: 10 TB+).
+
 .EXAMPLE
     .\Remove-ExpiredImmutableBlobs.ps1
     Executa em modo DryRun, listando todos os blobs com imutabilidade vencida.
@@ -72,8 +76,12 @@
     .\Remove-ExpiredImmutableBlobs.ps1 -StorageAccountName "mystorageaccount" -VerboseProgress
     Executa com progresso detalhado em tempo real para acompanhar Storage Accounts grandes.
 
+.EXAMPLE
+    .\Remove-ExpiredImmutableBlobs.ps1 -RemoveBlobs -MinAccountSizeTB 10
+    Remove blobs elegíveis apenas em Storage Accounts com 10 TB ou mais de volume analisado.
+
 .NOTES
-    Versão: 1.2.0
+    Versão: 1.3.0
     Autor: M365 Security Toolkit
     Requer: Az.Storage, Az.Accounts (PowerShell 7.0+)
     Licença: MIT
@@ -118,7 +126,10 @@ param(
     [switch]$VerboseProgress,
 
     [Parameter()]
-    [int]$MaxDaysExpired = 0
+    [int]$MaxDaysExpired = 0,
+
+    [Parameter()]
+    [int]$MinAccountSizeTB = 0
 )
 
 # ============================================================================
@@ -126,7 +137,7 @@ param(
 # ============================================================================
 
 $ErrorActionPreference = "Stop"
-$script:ScriptVersion = "1.2.0"
+$script:ScriptVersion = "1.3.0"
 $script:StartTime = Get-Date
 $script:Now = [DateTimeOffset]::UtcNow
 
@@ -513,16 +524,16 @@ function Invoke-BlobAction {
     # Remover blob completo
     if ($RemoveBlobs) {
         try {
-            # Primeiro, remover a política de imutabilidade (se existir e estiver unlocked)
-            if ($BlobInfo.ImmutabilityMode -eq "Unlocked") {
-                Remove-AzStorageBlobImmutabilityPolicy `
-                    -Container $BlobInfo.Container `
-                    -Blob $BlobInfo.BlobName `
-                    -Context $StorageContext
-                $script:Stats.PoliciesRemoved++
-            }
-
             if ($PSCmdlet.ShouldProcess($BlobInfo.BlobName, "Remover blob com imutabilidade vencida")) {
+                # Primeiro, remover a política de imutabilidade (se existir e estiver unlocked)
+                if ($BlobInfo.ImmutabilityMode -eq "Unlocked") {
+                    Remove-AzStorageBlobImmutabilityPolicy `
+                        -Container $BlobInfo.Container `
+                        -Blob $BlobInfo.BlobName `
+                        -Context $StorageContext
+                    $script:Stats.PoliciesRemoved++
+                }
+
                 Remove-AzStorageBlob `
                     -Container $BlobInfo.Container `
                     -Blob $BlobInfo.BlobName `
@@ -795,6 +806,10 @@ function Start-ImmutabilityAudit {
         Write-Log "Filtro: apenas blobs expirados há mais de $MaxDaysExpired dias" "INFO"
     }
 
+    if ($MinAccountSizeTB -gt 0) {
+        Write-Log "Filtro destrutivo por tamanho: apenas contas com $MinAccountSizeTB TB ou mais" "INFO"
+    }
+
     # Confirmação para modos destrutivos
     if ($RemoveBlobs -or $RemoveImmutabilityPolicyOnly) {
         Write-Host ""
@@ -838,6 +853,10 @@ function Start-ImmutabilityAudit {
         $accountName = $account.StorageAccountName
         $accountRG = $account.ResourceGroupName
         $accountStartTime = Get-Date
+        $accountBlobsScanned = 0
+        $accountBytesScanned = 0
+        $accountEligibleBytes = 0
+        $accountEligibleQueue = [System.Collections.Generic.List[PSCustomObject]]::new()
 
         Write-Log "Processando Storage Account: $accountName (RG: $accountRG)" "SECTION"
         Show-Progress -Activity "Analisando Storage Accounts" `
@@ -923,6 +942,8 @@ function Start-ImmutabilityAudit {
                         foreach ($blob in $blobPage) {
                             $script:Stats.BlobsScanned++
                             $script:Stats.BytesScanned += $blob.Length
+                            $accountBlobsScanned++
+                            $accountBytesScanned += $blob.Length
                             $blobIndex++
                             $containerBlobCount++
                             $containerBytesScanned += $blob.Length
@@ -960,7 +981,15 @@ function Start-ImmutabilityAudit {
 
                             # Executar ação se elegível
                             if ($blobResult.Eligible) {
-                                Invoke-BlobAction -BlobInfo $blobResult -StorageContext $storageContext
+                                $accountEligibleBytes += $blob.Length
+
+                                if (($RemoveBlobs -or $RemoveImmutabilityPolicyOnly) -and $MinAccountSizeTB -gt 0) {
+                                    $blobResult.Action = "PendingThreshold"
+                                    $accountEligibleQueue.Add($blobResult)
+                                }
+                                else {
+                                    Invoke-BlobAction -BlobInfo $blobResult -StorageContext $storageContext
+                                }
                             }
 
                             # Adicionar ao resultado (apenas blobs com política)
@@ -986,10 +1015,29 @@ function Start-ImmutabilityAudit {
                 }
             }
 
+            if (($RemoveBlobs -or $RemoveImmutabilityPolicyOnly) -and $MinAccountSizeTB -gt 0) {
+                $thresholdBytes = [long]$MinAccountSizeTB * 1TB
+
+                if ($accountBytesScanned -ge $thresholdBytes) {
+                    Write-Log "Conta '$accountName' qualificada para ação destrutiva: $(Format-FileSize $accountBytesScanned) analisados (limiar: $MinAccountSizeTB TB)." "WARN"
+
+                    foreach ($queuedBlob in $accountEligibleQueue) {
+                        Invoke-BlobAction -BlobInfo $queuedBlob -StorageContext $storageContext
+                    }
+                }
+                else {
+                    Write-Log "Conta '$accountName' abaixo do limiar ($MinAccountSizeTB TB): $(Format-FileSize $accountBytesScanned). Nenhuma ação destrutiva será executada." "INFO"
+
+                    foreach ($queuedBlob in $accountEligibleQueue) {
+                        $queuedBlob.Action = "SkippedBelowThreshold"
+                    }
+                }
+            }
+
             # Resumo da Storage Account (verbose)
             if ($VerboseProgress) {
                 $accountDuration = (Get-Date) - $accountStartTime
-                Write-Log "Resumo '$accountName': $($script:Stats.BlobsScanned) blobs total | $(Format-FileSize $script:Stats.BytesScanned) | Dur: $($accountDuration.ToString('hh\:mm\:ss'))" "SUCCESS"
+                Write-Log "Resumo '$accountName': $accountBlobsScanned blobs total | $(Format-FileSize $accountBytesScanned) | Elegível: $(Format-FileSize $accountEligibleBytes) | Dur: $($accountDuration.ToString('hh\:mm\:ss'))" "SUCCESS"
             }
         }
         catch {
