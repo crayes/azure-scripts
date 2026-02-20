@@ -63,6 +63,7 @@ Políticas de imutabilidade são essenciais para compliance (SEC 17a-4, etc.), m
 | `-RemoveImmutabilityPolicyOnly`| Ativa o modo que remove apenas a política, mantendo o blob.                    |
 | `-OutputPath`                | Pasta para salvar os relatórios (padrão: `./Reports`).                          |
 | `-ExportCsv`                 | Gera um relatório adicional em formato CSV.                                    |
+| `-VerboseProgress`           | Ativa modo verbose com progresso detalhado, throughput e ETA em tempo real.   |
 | `-MaxDaysExpired`            | Filtra para remover apenas blobs expirados há mais de `N` dias.                |
 
 ### Exemplo de Relatório HTML
