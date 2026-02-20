@@ -43,13 +43,17 @@ Principais recursos:
 
 Veja [azure-scripts-ui/README.md](azure-scripts-ui/README.md) para instalação e uso.
 
-### ✨ Novidades v4.3
+### ✨ Novidades v4.4
 
-- **Remove-ExpiredImmutableBlobs.ps1 v1.0** - Novo script para Azure Blob Storage: avalia e remove blobs com políticas de imutabilidade (WORM) vencidas
-- Suporta imutabilidade a nível de container e a nível de versão (blob individual)
-- Modo simulação (`-DryRun`) como padrão, remoção com confirmação explícita
-- Relatório HTML interativo + exportação CSV
-- Novo diretório `scripts/Storage/` para scripts de Azure Storage
+- **Remove-ExpiredImmutableBlobs.ps1 v3.1.0** — Refatoração completa do script de Azure Blob Storage
+  - UX redesenhada: inline progress counter substitui spam de `[EXPIRED]` por blob
+  - Transição clara entre fases (análise → remoção) com contadores e tamanhos
+  - Cada remoção logada individualmente com numeração `[N/total]`
+  - Paginação robusta com ContinuationToken (testado em containers 10TB+)
+  - Version-level WORM: suporta blobs versionados (Veeam, Commvault)
+  - PageSize configurável (10–5000) para testes rápidos
+  - Fix: ParserError do PowerShell em variáveis com `:`
+  - Relatório HTML interativo + exportação CSV
 
 ### ✨ Novidades v4.2
 
@@ -83,7 +87,7 @@ Veja [azure-scripts-ui/README.md](azure-scripts-ui/README.md) para instalação 
 | **Verificar capacidades do tenant** | `Get-TenantCapabilities.ps1` |
 | **Aumentar Compliance Score** | `M365-Remediation.ps1 -TenantName "X"` (gera evidências automaticamente) |
 | **Auditoria Purview + Power Platform** | `Purview-Audit-PA-PS7.ps1` |
-| **Limpeza de Blob Storage (Imutabilidade Vencida)** | `Remove-ExpiredImmutableBlobs.ps1` |
+| **Limpeza de Blob Storage (Imutabilidade WORM Vencida)** | `Remove-ExpiredImmutableBlobs.ps1 -RemoveBlobs` |
 
 ---
 
