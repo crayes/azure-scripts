@@ -43,6 +43,14 @@ Principais recursos:
 
 Veja [azure-scripts-ui/README.md](azure-scripts-ui/README.md) para instalação e uso.
 
+### ✨ Novidades v4.3
+
+- **Remove-ExpiredImmutableBlobs.ps1 v1.0** - Novo script para Azure Blob Storage: avalia e remove blobs com políticas de imutabilidade (WORM) vencidas
+- Suporta imutabilidade a nível de container e a nível de versão (blob individual)
+- Modo simulação (`-DryRun`) como padrão, remoção com confirmação explícita
+- Relatório HTML interativo + exportação CSV
+- Novo diretório `scripts/Storage/` para scripts de Azure Storage
+
 ### ✨ Novidades v4.2
 
 - **M365-Remediation.ps1 v4.2** - DLP Workload Coverage Repair: repara automaticamente políticas DLP com workloads faltantes
@@ -75,6 +83,7 @@ Veja [azure-scripts-ui/README.md](azure-scripts-ui/README.md) para instalação 
 | **Verificar capacidades do tenant** | `Get-TenantCapabilities.ps1` |
 | **Aumentar Compliance Score** | `M365-Remediation.ps1 -TenantName "X"` (gera evidências automaticamente) |
 | **Auditoria Purview + Power Platform** | `Purview-Audit-PA-PS7.ps1` |
+| **Limpeza de Blob Storage (Imutabilidade Vencida)** | `Remove-ExpiredImmutableBlobs.ps1` |
 
 ---
 

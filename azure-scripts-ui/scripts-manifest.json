@@ -176,6 +176,54 @@
         }
       ]
     },
+    "scripts/Storage/Remove-ExpiredImmutableBlobs.ps1": {
+      "displayName": "Remove Expired Immutable Blobs",
+      "description": "Avalia e remove blobs com políticas de imutabilidade (WORM) vencidas.",
+      "requires": {
+        "permissions": ["Storage Blob Data Contributor", "Storage Blob Data Owner"]
+      },
+      "args": [
+        {
+          "key": "SubscriptionId",
+          "label": "Subscription ID",
+          "type": "string",
+          "flag": "-SubscriptionId",
+          "placeholder": "ID da Subscription (opcional)"
+        },
+        {
+          "key": "ResourceGroupName",
+          "label": "Resource Group",
+          "type": "string",
+          "flag": "-ResourceGroupName",
+          "placeholder": "Nome do Resource Group (opcional)"
+        },
+        {
+          "key": "StorageAccountName",
+          "label": "Storage Account",
+          "type": "string",
+          "flag": "-StorageAccountName",
+          "placeholder": "Nome do Storage Account (opcional)"
+        },
+        {
+          "key": "RemoveBlobs",
+          "label": "Remover Blobs Expirados",
+          "type": "switch",
+          "flag": "-RemoveBlobs"
+        },
+        {
+          "key": "RemoveImmutabilityPolicyOnly",
+          "label": "Remover Apenas a Política",
+          "type": "switch",
+          "flag": "-RemoveImmutabilityPolicyOnly"
+        },
+        {
+          "key": "ExportCsv",
+          "label": "Exportar para CSV",
+          "type": "switch",
+          "flag": "-ExportCsv"
+        }
+      ]
+    },
     "OneDrive-Complete-Audit.ps1": {
       "displayName": "OneDrive Audit (Root)",
       "description": "Auditoria completa de OneDrive e SharePoint.",

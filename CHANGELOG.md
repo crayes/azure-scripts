@@ -2,6 +2,23 @@
 
 Todas as mudanças relevantes do projeto serão documentadas aqui.
 
+## [4.3] - 2026-02-19
+
+### Added
+- **Remove-ExpiredImmutableBlobs.ps1 v1.0** - Novo script para Azure Blob Storage
+  - Avalia e remove blobs com políticas de imutabilidade (WORM) vencidas
+  - Suporta imutabilidade a nível de container e a nível de versão (blob individual)
+  - Identifica e reporta blobs sob Legal Hold (sem remoção automática)
+  - Modo simulação (`-DryRun`) como padrão para segurança
+  - Remoção de blobs (`-RemoveBlobs`) com confirmação explícita
+  - Remoção apenas da política (`-RemoveImmutabilityPolicyOnly`) mantendo o blob
+  - Filtro por Storage Account, Resource Group, Container ou Subscription
+  - Filtro por dias expirados (`-MaxDaysExpired`)
+  - Relatório HTML interativo com dashboard e estatísticas
+  - Exportação CSV opcional
+  - Integrado ao `scripts-manifest.json` para Azure Scripts UI
+- Novo diretório `scripts/Storage/` para scripts de Azure Storage
+
 ## [4.2] - 2026-02-18
 
 ### Added
