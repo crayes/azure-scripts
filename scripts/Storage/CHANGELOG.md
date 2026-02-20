@@ -1,5 +1,38 @@
 # Remove-ExpiredImmutableBlobs — Changelog
 
+## v3.2.0 (2026-02-20) — Estabilidade e desempenho
+
+### Segurança operacional
+- Suporte nativo a `-WhatIf` e `-Confirm` via `SupportsShouldProcess` (PowerShell common parameters)
+- Novo parâmetro `-Force` para execução destrutiva não interativa (CI/automação)
+- Prompt textual de confirmação mantido por padrão para reduzir risco operacional
+
+### Autenticação e compatibilidade
+- Fluxo de autenticação reforçado com fallback para `Connect-AzAccount -UseDeviceAuthentication`
+- Compatível com PowerShell 7 em macOS e Windows sem dependência de shell específico
+- `Set-AzContext -Scope Process` para evitar impacto no contexto global da sessão
+
+### Resiliência e performance
+- Retry com backoff exponencial para falhas transitórias (429, timeout, 5xx)
+- Retry aplicado em listagem de blobs e operações de remoção (policy/blob)
+- Redução de overhead de log em lotes grandes (amostragem por item fora do modo verbose)
+- DryRun otimizado para processar elegíveis por página sem varredura cumulativa global
+
+### Novos parâmetros
+| Parâmetro | Tipo | Padrão | Descrição |
+|-----------|------|--------|-----------|
+| `-ExecutionProfile` | string | `Manual` | Presets: `Manual`, `Conservative`, `Balanced`, `Aggressive` |
+| `-MaxRetryAttempts` | int | 3 | Tentativas máximas para falhas transitórias |
+| `-RetryDelaySeconds` | int | 2 | Delay base do backoff exponencial |
+| `-Force` | switch | | Pula prompt textual destrutivo |
+
+### Presets de execução
+- `Conservative`: `PageSize=1000`, `MaxRetryAttempts=5`, `RetryDelaySeconds=3`
+- `Balanced`: `PageSize=2500`, `MaxRetryAttempts=4`, `RetryDelaySeconds=2`
+- `Aggressive`: `PageSize=5000`, `MaxRetryAttempts=3`, `RetryDelaySeconds=1`
+
+---
+
 ## v3.1.0 (2026-02-20) — UX Overhaul
 
 ### Melhorias de UX

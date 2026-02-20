@@ -17,8 +17,13 @@ Este script automatiza todo o processo: identifica blobs expirados, remove a pol
   - `DryRun` (padrão) — simula sem alterar nada
   - `RemoveBlobs` — remove blob + política (com confirmação)
   - `RemoveImmutabilityPolicyOnly` — remove só a política, mantém o blob
+- **Segurança operacional**: Suporte nativo a `-WhatIf` e `-Confirm` (ShouldProcess)
+- **Confirmação reforçada**: Prompt textual obrigatório em modo destrutivo (ou `-Force` em automação)
+- **Autenticação resiliente**: fallback automático para Device Code em PowerShell 7 (macOS/Windows)
 - **Paginação robusta**: Processa em lotes de até 5000 blobs via ContinuationToken
 - **Progress inline**: Contador atualizado em tempo real durante análise (sem spam de linhas)
+- **Retry com backoff**: Reexecução automática para falhas transitórias (429/timeout/5xx)
+- **Perfis de execução**: presets para estabilidade/desempenho sem alterar a lógica funcional
 - **Relatório HTML**: Dashboard visual com estatísticas e tabela de blobs
 - **Export CSV**: Dados estruturados para análise em Excel
 - **Threshold mode**: Executa ações apenas em contas acima de N TB
@@ -35,6 +40,9 @@ Install-Module -Name Az.Storage -Force
 
 # Conectar
 Connect-AzAccount
+
+# Opcional (mais compatível em ambientes sem browser)
+Connect-AzAccount -UseDeviceAuthentication
 ```
 
 ## Uso
@@ -58,6 +66,12 @@ Connect-AzAccount
 # Remover blobs com imutabilidade vencida (pede confirmação)
 .\Remove-ExpiredImmutableBlobs.ps1 -StorageAccountName "meustorage" -RemoveBlobs
 
+# Pré-visualização segura sem alterar nada (ShouldProcess)
+.\Remove-ExpiredImmutableBlobs.ps1 -StorageAccountName "meustorage" -RemoveBlobs -WhatIf
+
+# Execução não interativa (CI/automação)
+.\Remove-ExpiredImmutableBlobs.ps1 -StorageAccountName "meustorage" -RemoveBlobs -Force -Confirm:$false
+
 # Remover apenas de contas com 10TB+
 .\Remove-ExpiredImmutableBlobs.ps1 -RemoveBlobs -MinAccountSizeTB 10
 
@@ -80,6 +94,9 @@ Connect-AzAccount
 ```powershell
 # PageSize menor para testes rápidos (mínimo 10)
 .\Remove-ExpiredImmutableBlobs.ps1 -RemoveBlobs -PageSize 50 -VerboseProgress
+
+# Perfil recomendado para produção (estabilidade + performance)
+.\Remove-ExpiredImmutableBlobs.ps1 -RemoveBlobs -ExecutionProfile Balanced
 ```
 
 ## Parâmetros
@@ -96,9 +113,15 @@ Connect-AzAccount
 | `-OutputPath` | string | `./Reports` | Pasta dos relatórios |
 | `-ExportCsv` | switch | | Gera CSV adicional |
 | `-VerboseProgress` | switch | | Logs extras e Write-Progress |
+| `-Force` | switch | | Pula prompt textual destrutivo (automação) |
+| `-ExecutionProfile` | string | `Manual` | Preset: `Manual`, `Conservative`, `Balanced`, `Aggressive` |
+| `-MaxRetryAttempts` | int | 3 | Tentativas para falhas transitórias |
+| `-RetryDelaySeconds` | int | 2 | Delay base do backoff exponencial |
 | `-MaxDaysExpired` | int | 0 | Só blobs expirados há N+ dias |
 | `-MinAccountSizeTB` | int | 0 | Ação só em contas ≥ N TB |
 | `-PageSize` | int | 5000 | Blobs por página (10–5000) |
+
+> **Common Parameters (PowerShell):** `-WhatIf` e `-Confirm` são suportados para operações destrutivas.
 
 ## Como funciona
 
@@ -125,7 +148,7 @@ Pág 1: 5000 blobs recebidos → mais páginas
 
 **Transição**: Mensagem clara com contagem e tamanho total.
 
-**Fase 2 (Remoção)**: Cada blob removido logado individualmente com numeração `[N/total]`.
+**Fase 2 (Remoção)**: Em modo padrão, logs por item são amostrados (primeiros 10, cada 100 e último) para reduzir overhead. Com `-VerboseProgress`, o detalhamento é total.
 
 ### Processo de remoção (2 passos)
 
@@ -147,7 +170,8 @@ Gera dashboard em `./Reports/ImmutabilityAudit_<timestamp>.html` com:
 - `Remove-AzStorageBlobImmutabilityPolicy` não aceita `-VersionId` — opera na versão current
 - Para versões não-current, o 404 na remoção de política é esperado e tratado
 - Blobs já deletados (404 na deleção) são marcados como `AlreadyDeleted` sem erro
-- Confirmação case-insensitive (`CONFIRMAR` / `confirmar`)
+- Modo destrutivo exige confirmação textual (`CONFIRMAR`) quando não usa `-Force`
+- Login Azure com fallback automático para Device Code quando necessário
 - Memória liberada página a página para containers grandes (10TB+)
 
 ## Permissões necessárias

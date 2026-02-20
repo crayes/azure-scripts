@@ -45,6 +45,12 @@ Veja [azure-scripts-ui/README.md](azure-scripts-ui/README.md) para instalação 
 
 ### ✨ Novidades v4.4
 
+- **Remove-ExpiredImmutableBlobs.ps1 v3.2.0** — Hardening de estabilidade e desempenho
+  - Suporte nativo a `-WhatIf` e `-Confirm` para operações destrutivas
+  - Retry com backoff exponencial para falhas transitórias (429/timeout/5xx)
+  - Perfis de execução: `Conservative`, `Balanced`, `Aggressive`
+  - Fluxo de autenticação resiliente com fallback Device Code (PowerShell 7)
+  - Logging otimizado em lotes grandes para reduzir overhead
 - **Remove-ExpiredImmutableBlobs.ps1 v3.1.0** — Refatoração completa do script de Azure Blob Storage
   - UX redesenhada: inline progress counter substitui spam de `[EXPIRED]` por blob
   - Transição clara entre fases (análise → remoção) com contadores e tamanhos

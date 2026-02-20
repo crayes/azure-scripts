@@ -22,19 +22,24 @@
 .PARAMETER RemoveImmutabilityPolicyOnly
     Remove apenas a política de imutabilidade, mantendo o blob.
 
+.PARAMETER ExecutionProfile
+    Preset operacional para estabilidade/desempenho sem alterar a lógica funcional.
+    Opções: Manual, Conservative, Balanced, Aggressive.
+
 .EXAMPLE
     .\Remove-ExpiredImmutableBlobs.ps1 -StorageAccountName "storage2025v2" -DryRun
     .\Remove-ExpiredImmutableBlobs.ps1 -StorageAccountName "storage2025v2" -RemoveBlobs
     .\Remove-ExpiredImmutableBlobs.ps1 -RemoveBlobs -MinAccountSizeTB 10
+    .\Remove-ExpiredImmutableBlobs.ps1 -RemoveBlobs -ExecutionProfile Balanced -Force -Confirm:`$false
 
 .NOTES
-    Versão: 3.1.0 | Requer: Az.Accounts, Az.Storage | PowerShell 7.0+
+    Versão: 3.2.0 | Requer: Az.Accounts, Az.Storage | PowerShell 7.0+
 #>
 
 #Requires -Version 7.0
 #Requires -Modules Az.Accounts, Az.Storage
 
-[CmdletBinding(DefaultParameterSetName = 'DryRun')]
+[CmdletBinding(DefaultParameterSetName = 'DryRun', SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
     [string]$SubscriptionId,
     [string]$ResourceGroupName,
@@ -48,6 +53,11 @@ param(
     [string]$OutputPath = "./Reports",
     [switch]$ExportCsv,
     [switch]$VerboseProgress,
+    [switch]$Force,
+    [ValidateSet('Manual', 'Conservative', 'Balanced', 'Aggressive')]
+    [string]$ExecutionProfile = 'Manual',
+    [ValidateRange(1, 10)] [int]$MaxRetryAttempts = 3,
+    [ValidateRange(1, 30)] [int]$RetryDelaySeconds = 2,
     [int]$MaxDaysExpired = 0,
     [int]$MinAccountSizeTB = 0,
     [ValidateRange(10, 5000)] [int]$PageSize = 5000
@@ -56,7 +66,7 @@ param(
 # ============================================================================
 # CONFIGURAÇÃO
 # ============================================================================
-$version = "3.1.0"
+$version = "3.2.0"
 $now = [DateTimeOffset]::UtcNow
 $startTime = Get-Date
 
@@ -65,6 +75,22 @@ $modeDryRun = -not $RemoveBlobs.IsPresent -and -not $RemoveImmutabilityPolicyOnl
 $modeRemove = $RemoveBlobs.IsPresent
 $modePolicyOnly = $RemoveImmutabilityPolicyOnly.IsPresent
 $verbose = $VerboseProgress.IsPresent
+
+# Perfis operacionais (não alteram lógica funcional; apenas tuning de execução)
+if ($ExecutionProfile -ne 'Manual') {
+    $profileSettings = switch ($ExecutionProfile) {
+        'Conservative' { @{ PageSize = 1000; MaxRetryAttempts = 5; RetryDelaySeconds = 3 } }
+        'Balanced'     { @{ PageSize = 2500; MaxRetryAttempts = 4; RetryDelaySeconds = 2 } }
+        'Aggressive'   { @{ PageSize = 5000; MaxRetryAttempts = 3; RetryDelaySeconds = 1 } }
+        default        { $null }
+    }
+
+    if ($null -ne $profileSettings) {
+        if (-not $PSBoundParameters.ContainsKey('PageSize')) { $PageSize = $profileSettings.PageSize }
+        if (-not $PSBoundParameters.ContainsKey('MaxRetryAttempts')) { $MaxRetryAttempts = $profileSettings.MaxRetryAttempts }
+        if (-not $PSBoundParameters.ContainsKey('RetryDelaySeconds')) { $RetryDelaySeconds = $profileSettings.RetryDelaySeconds }
+    }
+}
 
 # Contadores
 $stats = @{
@@ -114,6 +140,59 @@ function Throughput { param([int]$N, [datetime]$Since); $s = ((Get-Date)-$Since)
 
 function AddError { param([string]$Ctx, [string]$Err); $stats.Errors++; $stats.ErrorList.Add("[$Ctx] $Err"); Log "[$Ctx] $Err" "ERROR" }
 
+function Test-TransientAzError {
+    param([string]$Message)
+    if ([string]::IsNullOrWhiteSpace($Message)) { return $false }
+
+    $patterns = @(
+        '429',
+        'TooManyRequests',
+        'ServerBusy',
+        'OperationTimedOut',
+        'timed out',
+        'timeout',
+        'temporar',
+        'InternalServerError',
+        'ServiceUnavailable',
+        'BadGateway',
+        'GatewayTimeout',
+        '5\d\d'
+    )
+
+    foreach ($p in $patterns) {
+        if ($Message -match $p) { return $true }
+    }
+    return $false
+}
+
+function Invoke-WithRetry {
+    param(
+        [scriptblock]$Operation,
+        [string]$Context,
+        [int]$Attempts = 3,
+        [int]$BaseDelaySeconds = 2
+    )
+
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        try {
+            return & $Operation
+        }
+        catch {
+            $msg = $_.Exception.Message
+            $isLast = $attempt -ge $Attempts
+            $isTransient = Test-TransientAzError -Message $msg
+
+            if ($isLast -or -not $isTransient) {
+                throw
+            }
+
+            $delay = [math]::Min(30, [math]::Max(1, ($BaseDelaySeconds * [math]::Pow(2, $attempt - 1))))
+            Log "[$Context] falha transitória ($attempt/$Attempts): $msg | retry em ${delay}s" "WARN"
+            Start-Sleep -Seconds $delay
+        }
+    }
+}
+
 # Inline progress — escreve na mesma linha sem pular
 function InlineProgress {
     param([string]$Msg, [string]$Color = "Yellow")
@@ -132,6 +211,7 @@ Write-Host ""
 
 $modeLabel = if ($modeRemove) { "REMOVER BLOBS" } elseif ($modePolicyOnly) { "REMOVER POLÍTICAS" } else { "SIMULAÇÃO (DryRun)" }
 Log "Modo: $modeLabel | PageSize: $PageSize" "SECTION"
+Log "Perfil execução: $ExecutionProfile | Retry: $MaxRetryAttempts tentativa(s), delay base ${RetryDelaySeconds}s" "INFO"
 if ($verbose) { Log "Verbose: ATIVADO" "INFO" }
 if ($MaxDaysExpired -gt 0) { Log "Filtro: apenas expirados há >$MaxDaysExpired dias" "INFO" }
 if ($MinAccountSizeTB -gt 0) { Log "Threshold: ação apenas em contas >=${MinAccountSizeTB}TB" "INFO" }
@@ -140,14 +220,27 @@ if ($MinAccountSizeTB -gt 0) { Log "Threshold: ação apenas em contas >=${MinAc
 # CONFIRMAÇÃO (modos destrutivos)
 # ============================================================================
 if ($modeRemove -or $modePolicyOnly) {
-    Write-Host ""
-    Write-Host "  ╔══════════════════════════════════════════════════════════╗" -ForegroundColor Red
-    Write-Host "  ║  ATENÇÃO: MODO DESTRUTIVO — $($modeLabel.PadRight(28))║" -ForegroundColor Red
-    Write-Host "  ╚══════════════════════════════════════════════════════════╝" -ForegroundColor Red
-    Write-Host ""
-    $confirm = Read-Host "  Digite 'CONFIRMAR' para prosseguir"
-    if ($confirm -ine 'CONFIRMAR') { Log "Cancelado pelo usuário." "WARN"; exit 0 }
-    Write-Host ""
+    if (-not $Force) {
+        $canPrompt = $true
+        try { $null = $Host.UI.RawUI } catch { $canPrompt = $false }
+
+        if (-not $canPrompt) {
+            Log "Sessão não interativa detectada. Use -Force para executar modo destrutivo sem prompt textual." "ERROR"
+            exit 1
+        }
+
+        Write-Host ""
+        Write-Host "  ╔══════════════════════════════════════════════════════════╗" -ForegroundColor Red
+        Write-Host "  ║  ATENÇÃO: MODO DESTRUTIVO — $($modeLabel.PadRight(28))║" -ForegroundColor Red
+        Write-Host "  ╚══════════════════════════════════════════════════════════╝" -ForegroundColor Red
+        Write-Host ""
+        $confirm = Read-Host "  Digite 'CONFIRMAR' para prosseguir"
+        if ($confirm -ine 'CONFIRMAR') { Log "Cancelado pelo usuário." "WARN"; exit 0 }
+        Write-Host ""
+    }
+    else {
+        Log "Flag -Force detectada: pulando prompt textual de confirmação." "WARN"
+    }
 }
 
 # ============================================================================
@@ -156,8 +249,21 @@ if ($modeRemove -or $modePolicyOnly) {
 Log "Verificando conexão Azure..." "INFO"
 try {
     $ctx = Get-AzContext
-    if (-not $ctx) { Log "Não conectado. Iniciando login..." "WARN"; Connect-AzAccount; $ctx = Get-AzContext }
-    if ($SubscriptionId) { Set-AzContext -SubscriptionId $SubscriptionId 3>$null | Out-Null; $ctx = Get-AzContext }
+    if (-not $ctx) {
+        Log "Não conectado. Iniciando login Azure..." "WARN"
+        try {
+            Connect-AzAccount -ErrorAction Stop | Out-Null
+        }
+        catch {
+            Log "Login interativo padrão falhou. Tentando autenticação por device code (compatível com macOS/Windows)..." "WARN"
+            Connect-AzAccount -UseDeviceAuthentication -ErrorAction Stop | Out-Null
+        }
+        $ctx = Get-AzContext
+    }
+    if ($SubscriptionId) {
+        Set-AzContext -SubscriptionId $SubscriptionId -Scope Process -ErrorAction Stop 3>$null | Out-Null
+        $ctx = Get-AzContext
+    }
     Log "Conectado: $($ctx.Account.Id) | Sub: $($ctx.Subscription.Name)" "SUCCESS"
 }
 catch { Log "Falha ao conectar: $($_.Exception.Message)" "ERROR"; exit 1 }
@@ -266,7 +372,11 @@ foreach ($account in $accounts) {
                 Log "    Pág ${pageNum}: requisitando até $PageSize blobs..." "INFO"
 
                 $raw = $null
-                try { $raw = Get-AzStorageBlob @listP -ErrorAction Stop }
+                try {
+                    $raw = Invoke-WithRetry -Context "ListBlobs($ctrName/pág$pageNum)" -Attempts $MaxRetryAttempts -BaseDelaySeconds $RetryDelaySeconds -Operation {
+                        Get-AzStorageBlob @listP -ErrorAction Stop
+                    }
+                }
                 catch { AddError "ListBlobs($ctrName/pág$pageNum)" $_.Exception.Message; break }
 
                 if ($null -eq $raw) { VLog "    Pág ${pageNum}: vazio (null)" "DEBUG"; break }
@@ -288,6 +398,7 @@ foreach ($account in $accounts) {
                 # FASE 1: ANALISAR blobs desta página
                 # ==============================================================
                 $pageEligible = [System.Collections.Generic.List[PSCustomObject]]::new()
+                $pageDryRun = [System.Collections.Generic.List[PSCustomObject]]::new()
                 $pageExpired = 0; $pageActive = 0; $pageNoPolicy = 0; $pageLH = 0
                 $pageBytesEligible = [long]0
                 $analyzeStart = Get-Date
@@ -371,7 +482,10 @@ foreach ($account in $accounts) {
                         elseif ($modeRemove -or $modePolicyOnly) {
                             $pageEligible.Add($r)
                         }
-                        else { $r.Action = "DryRun" }
+                        else {
+                            $r.Action = "DryRun"
+                            $pageDryRun.Add($r)
+                        }
                     }
 
                     if ($r.Status -ne "NoPolicy") { $allResults.Add($r) }
@@ -387,10 +501,9 @@ foreach ($account in $accounts) {
 
                 # DryRun: listar os elegíveis desta página
                 if ($modeDryRun) {
-                    $dryItems = @($allResults | Where-Object { $_.Action -eq "DryRun" })
-                    if ($dryItems.Count -gt 0) {
-                        Log "    DryRun — $($dryItems.Count) blob(s) seriam removidos:" "WARN"
-                        foreach ($di in $dryItems) {
+                    if ($pageDryRun.Count -gt 0) {
+                        Log "    DryRun — $($pageDryRun.Count) blob(s) seriam removidos:" "WARN"
+                        foreach ($di in $pageDryRun) {
                             $vL = if ($di.VersionId) { " [v:$($di.VersionId.Substring(0,[math]::Min(16,$di.VersionId.Length)))]" } else { "" }
                             Log "      '$($di.Blob)'$vL — $($di.DaysExp)d expirado ($($di.SizeFmt)) [$($di.Mode)]" "INFO"
                             $di.Action = "DryRunLogged"
@@ -419,11 +532,20 @@ foreach ($account in $accounts) {
                         $polP = @{ Container = $item.Container; Blob = $item.Blob; Context = $storageCtx }
 
                         if ($modePolicyOnly) {
+                            $target = "$($item.Container)/$($item.Blob)"
+                            if (-not $PSCmdlet.ShouldProcess($target, "Remover política de imutabilidade")) {
+                                $item.Action = "SkippedWhatIf"
+                                continue
+                            }
                             try {
-                                Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop
+                                Invoke-WithRetry -Context "RemovePolicy($($item.Blob))" -Attempts $MaxRetryAttempts -BaseDelaySeconds $RetryDelaySeconds -Operation {
+                                    Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop
+                                } | Out-Null
                                 $item.Action = "PolicyRemoved"
                                 $stats.PoliciesRemoved++
-                                Log "    [$actionIdx/$($pageEligible.Count)] POLICY REMOVED: '$($item.Blob)'$vLabel" "SUCCESS"
+                                if ($verbose -or $actionIdx -le 10 -or $actionIdx % 100 -eq 0 -or $actionIdx -eq $pageEligible.Count) {
+                                    Log "    [$actionIdx/$($pageEligible.Count)] POLICY REMOVED: '$($item.Blob)'$vLabel" "SUCCESS"
+                                }
                             }
                             catch {
                                 $item.Action = "Error: $($_.Exception.Message)"
@@ -431,11 +553,18 @@ foreach ($account in $accounts) {
                             }
                         }
                         elseif ($modeRemove) {
+                            $target = "$($item.Container)/$($item.Blob)"
+                            if (-not $PSCmdlet.ShouldProcess($target, "Remover política de imutabilidade expirada e deletar blob")) {
+                                $item.Action = "SkippedWhatIf"
+                                continue
+                            }
                             try {
                                 # Passo 1: remover política de imutabilidade expirada
                                 if ($item.Mode) {
                                     try {
-                                        Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop
+                                        Invoke-WithRetry -Context "RemovePolicy($($item.Blob))" -Attempts $MaxRetryAttempts -BaseDelaySeconds $RetryDelaySeconds -Operation {
+                                            Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop
+                                        } | Out-Null
                                         $stats.PoliciesRemoved++
                                     }
                                     catch {
@@ -453,13 +582,17 @@ foreach ($account in $accounts) {
                                 }
                                 if ($item.VersionId) { $delP['VersionId'] = $item.VersionId }
 
-                                Remove-AzStorageBlob @delP -ErrorAction Stop
+                                Invoke-WithRetry -Context "RemoveBlob($($item.Blob))" -Attempts $MaxRetryAttempts -BaseDelaySeconds $RetryDelaySeconds -Operation {
+                                    Remove-AzStorageBlob @delP -ErrorAction Stop
+                                } | Out-Null
 
                                 $item.Action = "Removed"
                                 $stats.Removed++
                                 $stats.BytesRemoved += $item.Size
                                 $ctrRemoved++
-                                Log "    [$actionIdx/$($pageEligible.Count)] REMOVED: '$($item.Blob)'$vLabel ($($item.SizeFmt))" "SUCCESS"
+                                if ($verbose -or $actionIdx -le 10 -or $actionIdx % 100 -eq 0 -or $actionIdx -eq $pageEligible.Count) {
+                                    Log "    [$actionIdx/$($pageEligible.Count)] REMOVED: '$($item.Blob)'$vLabel ($($item.SizeFmt))" "SUCCESS"
+                                }
                             }
                             catch {
                                 $e = $_.Exception.Message
@@ -507,19 +640,37 @@ foreach ($account in $accounts) {
                     $tIdx++
                     $polP = @{ Container = $qItem.Container; Blob = $qItem.Blob; Context = $storageCtx }
                     try {
+                        $target = "$($qItem.Container)/$($qItem.Blob)"
+                        $op = if ($modeRemove) { "Remover política expirada e deletar blob (threshold)" } else { "Remover política de imutabilidade (threshold)" }
+                        if (-not $PSCmdlet.ShouldProcess($target, $op)) {
+                            $qItem.Action = "SkippedWhatIf"
+                            continue
+                        }
+
                         if ($qItem.Mode) {
-                            try { Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop; $stats.PoliciesRemoved++ }
+                            try {
+                                Invoke-WithRetry -Context "ThresholdPolicy($($qItem.Blob))" -Attempts $MaxRetryAttempts -BaseDelaySeconds $RetryDelaySeconds -Operation {
+                                    Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop
+                                } | Out-Null
+                                $stats.PoliciesRemoved++
+                            }
                             catch { <# ignora BlobNotFound para versões não-current #> }
                         }
                         if ($modeRemove) {
                             $delP = @{ Container = $qItem.Container; Blob = $qItem.Blob; Context = $storageCtx; Force = $true }
                             if ($qItem.VersionId) { $delP['VersionId'] = $qItem.VersionId }
-                            Remove-AzStorageBlob @delP -ErrorAction Stop
+                            Invoke-WithRetry -Context "ThresholdRemove($($qItem.Blob))" -Attempts $MaxRetryAttempts -BaseDelaySeconds $RetryDelaySeconds -Operation {
+                                Remove-AzStorageBlob @delP -ErrorAction Stop
+                            } | Out-Null
                             $qItem.Action = "Removed"; $stats.Removed++; $stats.BytesRemoved += $qItem.Size
-                            Log "    [$tIdx/$($thresholdQueue.Count)] REMOVED: '$($qItem.Blob)' ($($qItem.SizeFmt))" "SUCCESS"
+                            if ($verbose -or $tIdx -le 10 -or $tIdx % 100 -eq 0 -or $tIdx -eq $thresholdQueue.Count) {
+                                Log "    [$tIdx/$($thresholdQueue.Count)] REMOVED: '$($qItem.Blob)' ($($qItem.SizeFmt))" "SUCCESS"
+                            }
                         } else {
                             $qItem.Action = "PolicyRemoved"; $stats.PoliciesRemoved++
-                            Log "    [$tIdx/$($thresholdQueue.Count)] POLICY REMOVED: '$($qItem.Blob)'" "SUCCESS"
+                            if ($verbose -or $tIdx -le 10 -or $tIdx % 100 -eq 0 -or $tIdx -eq $thresholdQueue.Count) {
+                                Log "    [$tIdx/$($thresholdQueue.Count)] POLICY REMOVED: '$($qItem.Blob)'" "SUCCESS"
+                            }
                         }
                     }
                     catch {
