@@ -15,8 +15,8 @@ Políticas de imutabilidade são essenciais para compliance (SEC 17a-4, etc.), m
 - **Análise Abrangente**: Varre subscriptions, resource groups ou storage accounts específicas.
 - **Dois Tipos de Imutabilidade**: Suporta políticas de contêiner (time-based) e de versão de blob.
 - **Legal Hold**: Identifica e reporta blobs sob Legal Hold, que não são removidos automaticamente.
-- **Modo Simulação (`-DryRun`)**: Permite visualizar quais blobs seriam removidos sem executar nenhuma ação destrutiva. É o modo padrão.
-- **Remoção Segura**: Requer o parâmetro `-RemoveBlobs` e uma confirmação explícita para deletar os blobs.
+- **Remoção (Padrão)**: Remove blobs com imutabilidade vencida por padrão (com confirmação explícita).
+- **Modo Simulação (`-DryRun`)**: Permite visualizar quais blobs seriam removidos sem executar nenhuma ação destrutiva.
 - **Remoção de Política**: Permite remover apenas a política de imutabilidade com `-RemoveImmutabilityPolicyOnly`, mantendo o blob.
 - **Filtro para Grandes Volumes**: Permite executar ações destrutivas somente em contas com volume analisado acima de um limiar (ex: `10TB+`) usando `-MinAccountSizeTB`.
 - **Relatórios Detalhados**: Gera um relatório em HTML interativo e um CSV com os resultados da análise.
@@ -28,18 +28,18 @@ Políticas de imutabilidade são essenciais para compliance (SEC 17a-4, etc.), m
    Connect-AzAccount
    ```
 
-2. **Execução em Modo Simulação (Padrão)**:
-   Analisa a subscription inteira e lista os blobs elegíveis.
+2. **Execução em Modo Padrão (Remove Blobs)**:
+   **Atenção**: Esta ação é destrutiva. O script pedirá uma confirmação manual.
    ```powershell
    .\Remove-ExpiredImmutableBlobs.ps1
    ```
 
 3. **Simulação em um Storage Account Específico**:
    ```powershell
-   .\Remove-ExpiredImmutableBlobs.ps1 -StorageAccountName "seu-storage-account"
+   .\Remove-ExpiredImmutableBlobs.ps1 -StorageAccountName "seu-storage-account" -DryRun
    ```
 
-4. **Remover Blobs com Imutabilidade Vencida**:
+4. **Remover Blobs com Imutabilidade Vencida (Explícito)**:
    **Atenção**: Esta ação é destrutiva. O script pedirá uma confirmação manual.
    ```powershell
    .\Remove-ExpiredImmutableBlobs.ps1 -StorageAccountName "seu-storage-account" -RemoveBlobs
@@ -59,20 +59,20 @@ Políticas de imutabilidade são essenciais para compliance (SEC 17a-4, etc.), m
 
 ### Parâmetros Principais
 
-| Parâmetro                    | Descrição                                                                      |
-|------------------------------|--------------------------------------------------------------------------------|
-| `-SubscriptionId`            | ID da subscription a ser analisada.                                            |
-| `-ResourceGroupName`         | Nome do Resource Group para filtrar a análise.                                 |
-| `-StorageAccountName`        | Nome do Storage Account para filtrar a análise.                                |
-| `-ContainerName`             | Nome do container para filtrar a análise.                                      |
-| `-DryRun`                    | **(Padrão)** Modo de simulação que não remove nada.                            |
-| `-RemoveBlobs`               | Ativa o modo de remoção de blobs. **Requer confirmação explícita.**             |
-| `-RemoveImmutabilityPolicyOnly`| Ativa o modo que remove apenas a política, mantendo o blob.                    |
-| `-OutputPath`                | Pasta para salvar os relatórios (padrão: `./Reports`).                          |
-| `-ExportCsv`                 | Gera um relatório adicional em formato CSV.                                    |
-| `-VerboseProgress`           | Ativa modo verbose com progresso detalhado, throughput e ETA em tempo real.   |
-| `-MaxDaysExpired`            | Filtra para remover apenas blobs expirados há mais de `N` dias.                |
-| `-MinAccountSizeTB`          | Em modo destrutivo, executa ação apenas em contas com volume analisado >= `N` TB. |
+| Parâmetro                      | Descrição                                                                       |
+|-------------------------------|---------------------------------------------------------------------------------|
+| `-SubscriptionId`             | ID da subscription a ser analisada.                                             |
+| `-ResourceGroupName`          | Nome do Resource Group para filtrar a análise.                                  |
+| `-StorageAccountName`         | Nome do Storage Account para filtrar a análise.                                 |
+| `-ContainerName`              | Nome do container para filtrar a análise.                                       |
+| `-DryRun`                     | Modo de simulação que não remove nada.                                          |
+| `-RemoveBlobs`                | Ativa o modo de remoção de blobs. **Requer confirmação explícita.**             |
+| `-RemoveImmutabilityPolicyOnly` | Ativa o modo que remove apenas a política, mantendo o blob.                    |
+| `-OutputPath`                 | Pasta para salvar os relatórios (padrão: `./Reports`).                           |
+| `-ExportCsv`                  | Gera um relatório adicional em formato CSV.                                     |
+| `-VerboseProgress`            | Ativa modo verbose com progresso detalhado, throughput e ETA em tempo real.     |
+| `-MaxDaysExpired`             | Filtra para remover apenas blobs expirados há mais de `N` dias.                  |
+| `-MinAccountSizeTB`           | Em modo destrutivo, executa ação apenas em contas com volume analisado >= `N` TB.|
 
 ### Exemplo de Relatório HTML
 
@@ -83,6 +83,11 @@ O script gera um relatório HTML com um dashboard interativo, resumo das estatí
 ---
 
 ## Changelog
+
+### v1.4.2 (20/02/2026)
+- ✨ **ALTERAÇÃO DE COMPORTAMENTO**: Modo padrão agora remove blobs (com confirmação).
+- 🐛 **CORREÇÃO**: Modo verbose e switches agora inicializam corretamente.
+- 🐛 **CORREÇÃO**: Processamento paginado por página para evitar estouro de memória em contas grandes.
 
 ### v1.4.1 (20/02/2026)
 - 🐛 **CORREÇÃO CRÍTICA**: Resolvido problema de estouro de memória em containers grandes
@@ -104,4 +109,3 @@ O script gera um relatório HTML com um dashboard interativo, resumo das estatí
 ### v1.3.0
 - Adicionado suporte a `-MinAccountSizeTB` para filtrar por volume
 - Modo verbose aprimorado com throughput e ETA
-
