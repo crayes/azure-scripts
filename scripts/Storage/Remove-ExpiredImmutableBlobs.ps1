@@ -61,13 +61,15 @@ param(
     [int]$MaxErrors = 0,
     [string]$ResumeFrom,
     [switch]$DisableCheckpoint,
-    [ValidateRange(10, 10000)] [int]$MaxReportRows = 5000
+    [ValidateRange(10, 10000)] [int]$MaxReportRows = 5000,
+    [ValidateRange(50, 2000)] [int]$BatchSize = 500,
+    [ValidateRange(1, 8)] [int]$SubprocessConcurrency = 3
 )
 
 # ============================================================================
 # CONFIGURAÇÃO
 # ============================================================================
-$version = "4.2.0"
+$version = "4.3.0"
 $now = [DateTimeOffset]::UtcNow
 $startTime = Get-Date
 
@@ -275,7 +277,7 @@ Write-Host "  ============================================================" -For
 Write-Host ""
 
 $modeLabel = if ($modeRemove) { "REMOVER BLOBS" } elseif ($modePolicyOnly) { "REMOVER POLÍTICAS" } else { "SIMULAÇÃO (DryRun)" }
-Log "Modo: $modeLabel | PageSize: $PageSize | Threads: $ThrottleLimit" "SECTION"
+Log "Modo: $modeLabel | PageSize: $PageSize | Batch: $BatchSize | Subprocesses: $SubprocessConcurrency" "SECTION"
 Log "Perfil: $ExecutionProfile | Retry: ${MaxRetryAttempts}x, delay base ${RetryDelaySeconds}s" "INFO"
 if ($ThrottleLimit -gt 1) { Log "Deleção PARALELA: $ThrottleLimit threads" "INFO" }
 if ($MaxErrors -gt 0)     { Log "Abort após $MaxErrors erros" "INFO" }
@@ -668,7 +670,7 @@ $acctIdx = 0
                 # ==========================================================
                 if ($pageEligible.Count -gt 0 -and -not $isSkipPage) {
                     Write-Host ""
-                    Log "    ► REMOVENDO: $($pageEligible.Count) blob(s) | $(FmtSize $pageBytesEligible) | Pág $pageNum | Threads: $ThrottleLimit" "WARN"
+                    Log "    ► REMOVENDO: $($pageEligible.Count) blob(s) | $(FmtSize $pageBytesEligible) | Pág $pageNum | Batch: $BatchSize × $SubprocessConcurrency" "WARN"
 
                     $actionStart = Get-Date
                     $pageRemoved = 0
@@ -759,7 +761,6 @@ $acctIdx = 0
                         # Cada batch roda num processo pwsh separado.
                         # Quando o processo morre, o OS libera TODA a memória.
                         # =============================================
-                        $batchSize = 200
                         $totalEligible = $pageEligible.Count
                         $batchNum = 0
 
@@ -837,9 +838,11 @@ foreach ($item in $items) {
 '@
                             $helperContent | Out-File -FilePath $helperScript -Encoding utf8
 
-                            for ($bi = 0; $bi -lt $totalEligible; $bi += $batchSize) {
+                            # --- Preparar todos os batches em disco ---
+                            $batchMeta = [System.Collections.Generic.List[hashtable]]::new()
+                            for ($bi = 0; $bi -lt $totalEligible; $bi += $BatchSize) {
                                 $batchNum++
-                                $batchEnd = [math]::Min($bi + $batchSize, $totalEligible)
+                                $batchEnd = [math]::Min($bi + $BatchSize, $totalEligible)
                                 $batchItems = $pageEligible.GetRange($bi, $batchEnd - $bi)
                                 $batchFile = Join-Path $batchDir "batch_${pageNum}_${batchNum}.json"
                                 $resultFile = Join-Path $batchDir "result_${pageNum}_${batchNum}.json"
@@ -858,57 +861,82 @@ foreach ($item in $items) {
                                 $jsonLines.Add("]")
                                 [System.IO.File]::WriteAllLines($batchFile, $jsonLines)
 
-                                Log "    Batch $batchNum [$($bi+1)..$batchEnd/$totalEligible]: spawning subprocess..." "INFO"
+                                $batchMeta.Add(@{
+                                    Num = $batchNum; Start = $bi + 1; End = $batchEnd; Count = $batchItems.Count
+                                    BatchFile = $batchFile; ResultFile = $resultFile
+                                })
+                            }
 
-                                # Executar helper script em subprocess isolado
-                                $stderrFile = [System.IO.Path]::GetTempFileName()
-                                $subProc = Start-Process -FilePath "pwsh" -ArgumentList @(
-                                    "-NoProfile", "-NonInteractive", "-File", $helperScript,
-                                    "-AccountName", $acctName,
-                                    "-AccountKey", $storageKey,
-                                    "-BatchFile", $batchFile,
-                                    "-ResultFile", $resultFile,
-                                    "-DoRemove", $(if($modeRemove){"1"}else{"0"}),
-                                    "-DoPolicyOnly", $(if($modePolicyOnly){"1"}else{"0"})
-                                ) -Wait -PassThru -NoNewWindow -RedirectStandardError $stderrFile
+                            # --- Executar batches com até $SubprocessConcurrency em paralelo ---
+                            $doRemoveArg = if ($modeRemove) { "1" } else { "0" }
+                            $doPolicyArg = if ($modePolicyOnly) { "1" } else { "0" }
+                            $totalBatches = $batchMeta.Count
+                            Log "    $totalBatches batches preparados (${BatchSize}/batch, concorrência: $SubprocessConcurrency)" "INFO"
 
-                                # Ler resultado
-                                if (Test-Path $resultFile) {
-                                    try {
-                                        $bResult = Get-Content $resultFile -Raw | ConvertFrom-Json
-                                        $pageRemoved += $bResult.Removed
-                                        $stats.Removed += $bResult.Removed
-                                        $stats.BytesRemoved += $bResult.BytesRemoved
-                                        $stats.PoliciesRemoved += $bResult.PoliciesRemoved
-                                        $ctrRemoved += $bResult.Removed
-                                        $pageErrors += $bResult.Errors
-                                        $stats.Errors += $bResult.Errors
-                                        if ($bResult.Removed -gt 0) { ResetConsecutiveErrors }
-                                        foreach ($errMsg in @($bResult.ErrorList)) {
-                                            if ($errMsg -and $stats.ErrorList.Count -lt 200) { $stats.ErrorList.Add("[SubBatch$batchNum] $errMsg") }
-                                        }
-                                        $batchLogLevel = if ($bResult.Errors -gt 0) { "WARN" } else { "SUCCESS" }
-                                        Log "    Batch ${batchNum}: $($bResult.Removed) removidos, $($bResult.Errors) erros ($(FmtSize $bResult.BytesRemoved))" $batchLogLevel
-                                        if ($bResult.ErrorList -and @($bResult.ErrorList).Count -gt 0) {
-                                            @($bResult.ErrorList) | Select-Object -First 3 | ForEach-Object {
-                                                Log "      ERRO: $_" "ERROR"
-                                            }
-                                        }
-                                    } catch {
-                                        Log "    Batch ${batchNum}: erro lendo resultado: $($_.Exception.Message)" "ERROR"
-                                        $pageErrors++; $stats.Errors++
-                                    }
-                                    Remove-Item $resultFile -Force -ErrorAction SilentlyContinue
-                                } else {
-                                    # Ler stderr para diagnóstico
-                                    $stderrContent = if (Test-Path $stderrFile) { (Get-Content $stderrFile -Raw) -replace "`r`n|`n"," " } else { "N/A" }
-                                    $stderrSnippet = if ($stderrContent.Length -gt 300) { $stderrContent.Substring(0, 300) } else { $stderrContent }
-                                    Log "    Batch ${batchNum}: subprocess falhou (exit: $($subProc.ExitCode)) stderr: $stderrSnippet" "ERROR"
-                                    $pageErrors += $batchItems.Count; $stats.Errors += $batchItems.Count
+                            $idx = 0
+                            while ($idx -lt $totalBatches) {
+                                # Spawnar até $SubprocessConcurrency subprocesses
+                                $running = [System.Collections.Generic.List[hashtable]]::new()
+                                $spawnEnd = [math]::Min($idx + $SubprocessConcurrency, $totalBatches)
+                                for ($si = $idx; $si -lt $spawnEnd; $si++) {
+                                    $bm = $batchMeta[$si]
+                                    $stderrFile = [System.IO.Path]::GetTempFileName()
+                                    Log "    Batch $($bm.Num) [$($bm.Start)..$($bm.End)/$totalEligible]: spawning..." "INFO"
+                                    $proc = Start-Process -FilePath "pwsh" -ArgumentList @(
+                                        "-NoProfile", "-NonInteractive", "-File", $helperScript,
+                                        "-AccountName", $acctName,
+                                        "-AccountKey", $storageKey,
+                                        "-BatchFile", $bm.BatchFile,
+                                        "-ResultFile", $bm.ResultFile,
+                                        "-DoRemove", $doRemoveArg,
+                                        "-DoPolicyOnly", $doPolicyArg
+                                    ) -PassThru -NoNewWindow -RedirectStandardError $stderrFile
+                                    $running.Add(@{ Meta = $bm; Proc = $proc; StderrFile = $stderrFile })
                                 }
-                                Remove-Item $batchFile -Force -ErrorAction SilentlyContinue
-                                Remove-Item $stderrFile -Force -ErrorAction SilentlyContinue
 
+                                # Aguardar todos do grupo
+                                foreach ($r in $running) {
+                                    $r.Proc.WaitForExit()
+                                    $bm = $r.Meta
+
+                                    # Ler resultado
+                                    if (Test-Path $bm.ResultFile) {
+                                        try {
+                                            $bResult = Get-Content $bm.ResultFile -Raw | ConvertFrom-Json
+                                            $pageRemoved += $bResult.Removed
+                                            $stats.Removed += $bResult.Removed
+                                            $stats.BytesRemoved += $bResult.BytesRemoved
+                                            $stats.PoliciesRemoved += $bResult.PoliciesRemoved
+                                            $ctrRemoved += $bResult.Removed
+                                            $pageErrors += $bResult.Errors
+                                            $stats.Errors += $bResult.Errors
+                                            if ($bResult.Removed -gt 0) { ResetConsecutiveErrors }
+                                            foreach ($errMsg in @($bResult.ErrorList)) {
+                                                if ($errMsg -and $stats.ErrorList.Count -lt 200) { $stats.ErrorList.Add("[SubBatch$($bm.Num)] $errMsg") }
+                                            }
+                                            $batchLogLevel = if ($bResult.Errors -gt 0) { "WARN" } else { "SUCCESS" }
+                                            Log "    Batch $($bm.Num): $($bResult.Removed) removidos, $($bResult.Errors) erros ($(FmtSize $bResult.BytesRemoved))" $batchLogLevel
+                                            if ($bResult.ErrorList -and @($bResult.ErrorList).Count -gt 0) {
+                                                @($bResult.ErrorList) | Select-Object -First 3 | ForEach-Object {
+                                                    Log "      ERRO: $_" "ERROR"
+                                                }
+                                            }
+                                        } catch {
+                                            Log "    Batch $($bm.Num): erro lendo resultado: $($_.Exception.Message)" "ERROR"
+                                            $pageErrors++; $stats.Errors++
+                                        }
+                                        Remove-Item $bm.ResultFile -Force -ErrorAction SilentlyContinue
+                                    } else {
+                                        $stderrContent = if (Test-Path $r.StderrFile) { (Get-Content $r.StderrFile -Raw) -replace "`r`n|`n"," " } else { "N/A" }
+                                        $stderrSnippet = if ($stderrContent.Length -gt 300) { $stderrContent.Substring(0, 300) } else { $stderrContent }
+                                        Log "    Batch $($bm.Num): subprocess falhou (exit: $($r.Proc.ExitCode)) stderr: $stderrSnippet" "ERROR"
+                                        $pageErrors += $bm.Count; $stats.Errors += $bm.Count
+                                    }
+                                    Remove-Item $bm.BatchFile -Force -ErrorAction SilentlyContinue
+                                    Remove-Item $r.StderrFile -Force -ErrorAction SilentlyContinue
+                                }
+
+                                $idx = $spawnEnd
                                 if (Test-MaxErrorsReached) { break }
                             }
                             # Limpar dir de batches
