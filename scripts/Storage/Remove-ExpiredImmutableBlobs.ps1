@@ -843,14 +843,14 @@ foreach (`$item in `$items) {
                                         foreach ($errMsg in $bResult.ErrorList) {
                                             if ($stats.ErrorList.Count -lt 200) { $stats.ErrorList.Add("[SubBatch$batchNum] $errMsg") }
                                         }
-                                        Log "    Batch $batchNum: $($bResult.Removed) removidos, $($bResult.Errors) erros ($(FmtSize $bResult.BytesRemoved))" "SUCCESS"
+                                        Log "    Batch ${batchNum}: $($bResult.Removed) removidos, $($bResult.Errors) erros ($(FmtSize $bResult.BytesRemoved))" "SUCCESS"
                                     } catch {
-                                        Log "    Batch $batchNum: erro lendo resultado: $($_.Exception.Message)" "ERROR"
+                                        Log "    Batch ${batchNum}: erro lendo resultado: $($_.Exception.Message)" "ERROR"
                                         $pageErrors++; $stats.Errors++
                                     }
                                     Remove-Item $resultFile -Force -ErrorAction SilentlyContinue
                                 } else {
-                                    Log "    Batch $batchNum: subprocess não gerou resultado (exit code: $($subProc.ExitCode))" "ERROR"
+                                    Log "    Batch ${batchNum}: subprocess não gerou resultado (exit code: $($subProc.ExitCode))" "ERROR"
                                     $pageErrors += $batchItems.Count; $stats.Errors += $batchItems.Count
                                 }
                                 Remove-Item $batchFile -Force -ErrorAction SilentlyContinue
