@@ -844,8 +844,8 @@ foreach ($item in $items) {
                                     "-AccountKey", $storageKey,
                                     "-BatchFile", $batchFile,
                                     "-ResultFile", $resultFile,
-                                    "-DoRemove", "`$$modeRemove",
-                                    "-DoPolicyOnly", "`$$modePolicyOnly"
+                                    "-DoRemove", $(if($modeRemove){"1"}else{"0"}),
+                                    "-DoPolicyOnly", $(if($modePolicyOnly){"1"}else{"0"})
                                 ) -Wait -PassThru -NoNewWindow -RedirectStandardError $stderrFile
 
                                 # Ler resultado
