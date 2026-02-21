@@ -98,8 +98,8 @@ if ($ExecutionProfile -ne 'Manual') {
 
 # Guardião de memória (cross-platform)
 $script:IsWindowsOS = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)
-$script:IsMacOS = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::OSX)
-$script:IsLinux = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Linux)
+$script:IsMacPlatform = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::OSX)
+$script:IsLinuxPlatform = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Linux)
 $script:MemoryGuardEnabled = -not $DisableMemoryGuard.IsPresent
 $script:TotalPhysicalMemoryBytes = [long]0
 
@@ -109,13 +109,13 @@ function Get-TotalPhysicalMemoryBytes {
         return [long]$memInfo.TotalPhysicalMemory
     }
 
-    if ($script:IsMacOS) {
+    if ($script:IsMacPlatform) {
         $memRaw = (& sysctl -n hw.memsize 2>$null)
         if ([string]::IsNullOrWhiteSpace($memRaw)) { return [long]0 }
         return [long]$memRaw
     }
 
-    if ($script:IsLinux) {
+    if ($script:IsLinuxPlatform) {
         if (-not (Test-Path '/proc/meminfo')) { return [long]0 }
         $line = (Get-Content '/proc/meminfo' -ErrorAction Stop | Where-Object { $_ -match '^MemTotal:\s+\d+\s+kB' } | Select-Object -First 1)
         if ([string]::IsNullOrWhiteSpace($line)) { return [long]0 }
