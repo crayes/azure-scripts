@@ -96,15 +96,42 @@ if ($ExecutionProfile -ne 'Manual') {
     }
 }
 
-# Guardião de memória (principalmente para ambientes Windows com menor RAM)
+# Guardião de memória (cross-platform)
 $script:IsWindowsOS = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)
+$script:IsMacOS = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::OSX)
+$script:IsLinux = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Linux)
 $script:MemoryGuardEnabled = -not $DisableMemoryGuard.IsPresent
 $script:TotalPhysicalMemoryBytes = [long]0
 
-if ($script:IsWindowsOS -and $script:MemoryGuardEnabled) {
-    try {
+function Get-TotalPhysicalMemoryBytes {
+    if ($script:IsWindowsOS) {
         $memInfo = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
-        $script:TotalPhysicalMemoryBytes = [long]$memInfo.TotalPhysicalMemory
+        return [long]$memInfo.TotalPhysicalMemory
+    }
+
+    if ($script:IsMacOS) {
+        $memRaw = (& sysctl -n hw.memsize 2>$null)
+        if ([string]::IsNullOrWhiteSpace($memRaw)) { return [long]0 }
+        return [long]$memRaw
+    }
+
+    if ($script:IsLinux) {
+        if (-not (Test-Path '/proc/meminfo')) { return [long]0 }
+        $line = (Get-Content '/proc/meminfo' -ErrorAction Stop | Where-Object { $_ -match '^MemTotal:\s+\d+\s+kB' } | Select-Object -First 1)
+        if ([string]::IsNullOrWhiteSpace($line)) { return [long]0 }
+        $kb = [long](($line -replace '^MemTotal:\s+','' -replace '\s+kB$','').Trim())
+        return $kb * 1KB
+    }
+
+    return [long]0
+}
+
+if ($script:MemoryGuardEnabled) {
+    try {
+        $script:TotalPhysicalMemoryBytes = Get-TotalPhysicalMemoryBytes
+        if ($script:TotalPhysicalMemoryBytes -le 0) {
+            $script:MemoryGuardEnabled = $false
+        }
     }
     catch {
         $script:MemoryGuardEnabled = $false
@@ -115,7 +142,7 @@ if ($MinAdaptivePageSize -gt $PageSize) {
     $MinAdaptivePageSize = $PageSize
 }
 
-if ($script:IsWindowsOS -and -not $PSBoundParameters.ContainsKey('PageSize') -and $script:TotalPhysicalMemoryBytes -gt 0 -and $script:TotalPhysicalMemoryBytes -le 20GB) {
+if (-not $PSBoundParameters.ContainsKey('PageSize') -and $script:TotalPhysicalMemoryBytes -gt 0 -and $script:TotalPhysicalMemoryBytes -le 20GB) {
     $PageSize = 1000
 }
 
@@ -287,7 +314,7 @@ Write-Host ""
 $modeLabel = if ($modeRemove) { "REMOVER BLOBS" } elseif ($modePolicyOnly) { "REMOVER POLÍTICAS" } else { "SIMULAÇÃO (DryRun)" }
 Log "Modo: $modeLabel | PageSize: $PageSize" "SECTION"
 Log "Perfil execução: $ExecutionProfile | Retry: $MaxRetryAttempts tentativa(s), delay base ${RetryDelaySeconds}s" "INFO"
-if ($script:IsWindowsOS -and $script:MemoryGuardEnabled -and $script:TotalPhysicalMemoryBytes -gt 0) {
+if ($script:MemoryGuardEnabled -and $script:TotalPhysicalMemoryBytes -gt 0) {
     Log "Memory guard: ATIVO | RAM: $(FmtSize $script:TotalPhysicalMemoryBytes) | HighWatermark: ${MemoryUsageHighWatermarkPercent}% | MinAdaptivePageSize: $MinAdaptivePageSize" "INFO"
 }
 elseif ($DisableMemoryGuard.IsPresent) {
@@ -715,14 +742,14 @@ foreach ($account in $accounts) {
 
                 # Liberar memória da página
                 $blobs = $null; $raw = $null; $pageEligible = $null
+                [System.GC]::Collect()
+                [System.GC]::WaitForPendingFinalizers()
 
                 # Ajustar page size dinamicamente se memória estiver alta
                 $memGuard = Invoke-AdaptiveMemoryGuard -CurrentPageSize $PageSize -MinPageSize $MinAdaptivePageSize -HighWatermarkPercent $MemoryUsageHighWatermarkPercent
                 if ($memGuard.Changed) {
                     Log "    Memory guard: uso $($memGuard.UsagePercent)% — reduzindo PageSize de $PageSize para $($memGuard.AdjustedPageSize)" "WARN"
                     $PageSize = $memGuard.AdjustedPageSize
-                    [System.GC]::Collect()
-                    [System.GC]::WaitForPendingFinalizers()
                 }
 
             } while ($null -ne $token)
