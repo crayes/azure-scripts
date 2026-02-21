@@ -308,15 +308,19 @@ public static class Program
         long removed = 0, errors = 0;
         Log($"    ► Deletando lote: {items.Count} blob(s) | {FormatSize(items.Sum(e => e.Size))}", "WARN");
 
-        var policied = items.Where(i => i.Mode != null).ToList();
-        if (policied.Count > 0) await RemovePoliciesAsync(containerClient, policied);
+        // Only remove policies for Unlocked mode — Locked policies can't be removed
+        // but expired Locked blobs can be deleted directly
+        var unlocked = items.Where(i => i.Mode != null && i.Mode.Equals("Unlocked", StringComparison.OrdinalIgnoreCase)).ToList();
+        if (unlocked.Count > 0) await RemovePoliciesAsync(containerClient, unlocked);
 
-        if (RemoveBlobs && batchClient != null)
+        if (RemoveBlobs)
         {
-            var (r, e) = await BatchDeleteAsync(serviceClient, batchClient, containerName, items);
+            // BlobBatchClient doesn't support versioned blobs (versionId in URI fails)
+            // Use concurrent individual deletes instead — still fast with async/await
+            var (r, e) = await ConcurrentDeleteAsync(serviceClient, containerName, items);
             removed = r; errors = e;
         }
-        else if (RemovePolicyOnly) removed = policied.Count;
+        else if (RemovePolicyOnly) removed = unlocked.Count;
 
         return (removed, errors);
     }
@@ -399,7 +403,7 @@ public static class Program
             catch (Exception ex)
             {
                 Log($"      Batch {batchNum}/{totalBatches}: batch API falhou ({ex.Message}), fallback individual...", "WARN");
-                var (fr, fe) = await FallbackDeleteAsync(serviceClient, containerName, batch);
+                var (fr, fe) = await ConcurrentDeleteAsync(serviceClient, containerName, batch);
                 totalRemoved += fr; totalErrors += fe;
             }
 
@@ -409,7 +413,7 @@ public static class Program
         return (totalRemoved, totalErrors);
     }
 
-    static async Task<(long removed, long errors)> FallbackDeleteAsync(
+    static async Task<(long removed, long errors)> ConcurrentDeleteAsync(
         BlobServiceClient serviceClient, string containerName, List<BlobItemInfo> items)
     {
         var containerClient = serviceClient.GetBlobContainerClient(containerName);
@@ -446,6 +450,7 @@ public static class Program
         }
 
         await Task.WhenAll(tasks);
+        Log($"      Deletados: {removed}, erros: {errors}", removed > 0 ? "SUCCESS" : "INFO");
         return (removed, errors);
     }
 
