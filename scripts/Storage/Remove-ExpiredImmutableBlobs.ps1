@@ -107,6 +107,7 @@ $containerInfo = [System.Collections.Generic.List[PSCustomObject]]::new()
 
 # Arquivo temporário para resultados detalhados (DISCO, não memória)
 if (-not (Test-Path $OutputPath)) { New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null }
+$OutputPath = (Resolve-Path $OutputPath).Path   # Absoluto — .NET APIs (WriteAllLines, StreamReader) não resolvem PWD do PowerShell
 $ts = Get-Date -Format "yyyyMMdd_HHmmss"
 $tempCsvPath = Join-Path $OutputPath ".temp_results_$ts.csv"
 $reportRowsWritten = 0
@@ -1133,3 +1134,4 @@ $el2 = if ($stats.Errors -gt 0) { "ERROR" } else { "SUCCESS" }
 Log "Erros: $($stats.Errors)" $el2
 Log "Duração: $($duration.ToString('hh\:mm\:ss'))" "INFO"
 Write-Host ""
+
