@@ -787,8 +787,8 @@ param(
     [string]$AccountKey,
     [string]$BatchFile,
     [string]$ResultFile,
-    [bool]$DoRemove,
-    [bool]$DoPolicyOnly
+    [int]$DoRemove,
+    [int]$DoPolicyOnly
 )
 $ErrorActionPreference = 'Continue'
 Import-Module Az.Storage -ErrorAction Stop
