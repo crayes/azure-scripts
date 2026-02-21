@@ -1,0 +1,35 @@
+{
+  "Version": "4.2.0",
+  "Stats": {
+    "Blobs": 5000,
+    "Active": 0,
+    "Pages": 1,
+    "Accounts": 1,
+    "Errors": 5000,
+    "BytesScanned": 875494924,
+    "Removed": 0,
+    "Eligible": 5000,
+    "BytesRemoved": 0,
+    "BytesEligible": 875494924,
+    "PoliciesRemoved": 0,
+    "Expired": 5000,
+    "Containers": 1,
+    "LegalHold": 0
+  },
+  "Phase": "scanning",
+  "ContainerName": "cloud1",
+  "PageNum": 1,
+  "Parameters": {
+    "StorageAccountName": "storage2025v2",
+    "ContainerName": "",
+    "ResourceGroupName": "",
+    "PageSize": 5000,
+    "MinAccountSizeTB": 0,
+    "MaxDaysExpired": 0,
+    "SubscriptionId": "",
+    "BlobPrefix": ""
+  },
+  "AccountName": "storage2025v2",
+  "Timestamp": "2026-02-21T12:22:47.0674810-05:00",
+  "HasToken": true
+}
