@@ -67,7 +67,7 @@ param(
 # ============================================================================
 # CONFIGURAÇÃO
 # ============================================================================
-$version = "4.1.0"
+$version = "4.2.0"
 $now = [DateTimeOffset]::UtcNow
 $startTime = Get-Date
 
@@ -753,107 +753,113 @@ $acctIdx = 0
                     }
                     else {
                         # =============================================
-                        # DELEÇÃO SEQUENCIAL (v4.1 — sem Invoke-WithRetry, GC periódico)
+                        # DELEÇÃO VIA SUBPROCESS (v4.2 — memória isolada)
+                        # Cada batch roda num processo pwsh separado.
+                        # Quando o processo morre, o OS libera TODA a memória.
                         # =============================================
-                        $actionIdx = 0
-                        # Criar contexto FRESCO para deleção (isolado do scan)
-                        $deleteCtx = if ($storageKey) {
-                            New-AzStorageContext -StorageAccountName $acctName -StorageAccountKey $storageKey
-                        } else { $storageCtx }
+                        $batchSize = 200
+                        $totalEligible = $pageEligible.Count
+                        $batchNum = 0
 
-                        foreach ($item in $pageEligible) {
-                            $actionIdx++
-                            if (Test-MaxErrorsReached) { break }
-
-                            $vLabel = if ($item.VersionId) { " [v:$($item.VersionId.Substring(0,[math]::Min(16,$item.VersionId.Length)))]" } else { "" }
-                            $target = "$($item.Container)/$($item.Blob)"
-
-                            if (-not $PSCmdlet.ShouldProcess($target, "Remover blob com imutabilidade expirada")) {
-                                continue
-                            }
-
-                            # GC a cada 200 deleções para evitar acúmulo
-                            if ($actionIdx % 200 -eq 0) {
-                                [System.GC]::Collect([System.GC]::MaxGeneration, [System.GCCollectionMode]::Forced, $true)
-                                [System.GC]::WaitForPendingFinalizers()
-                            }
-
-                            # Renovar contexto a cada 500 deleções (evita acúmulo interno do SDK)
-                            if ($actionIdx % 500 -eq 0 -and $storageKey) {
-                                $deleteCtx = New-AzStorageContext -StorageAccountName $acctName -StorageAccountKey $storageKey
-                                VLog "    Contexto renovado em $actionIdx deleções" "DEBUG"
-                            }
-
-                            $polP = @{ Container = $item.Container; Blob = $item.Blob; Context = $deleteCtx }
-
-                            if ($modePolicyOnly) {
-                                $delRetry = 0
-                                :polRetry while ($true) {
-                                try {
-                                    $null = Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop
-                                    $stats.PoliciesRemoved++
-                                    ResetConsecutiveErrors
-                                    if ($verbose -or $actionIdx -le 5 -or $actionIdx % 100 -eq 0 -or $actionIdx -eq $pageEligible.Count) {
-                                        Log "    [$actionIdx/$($pageEligible.Count)] POLICY: '$($item.Blob)'$vLabel" "SUCCESS"
-                                    }
-                                }
-                                catch {
-                                    $e = $_.Exception.Message
-                                    if (Test-BlobNotFoundError -Message $e) { ResetConsecutiveErrors }
-                                    elseif ($delRetry -lt $MaxRetryAttempts -and (Test-TransientAzError -Message $e)) {
-                                        $delRetry++
-                                        Start-Sleep -Seconds ([math]::Min(30, $RetryDelaySeconds * [math]::Pow(2, $delRetry - 1)))
-                                        continue polRetry
-                                    }
-                                    else { AddError "RemovePolicy($($item.Blob))" $e }
-                                }
-                                break
-                                }
-                            }
-                            elseif ($modeRemove) {
-                                $delRetry = 0
-                                :delRetry while ($true) {
-                                try {
-                                    if ($item.Mode) {
-                                        try {
-                                            $null = Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop
-                                            $stats.PoliciesRemoved++
-                                        }
-                                        catch {
-                                            if ($_.Exception.Message -notmatch 'BlobNotFound|404|does not exist') {
-                                                Log "    Aviso policy: $($_.Exception.Message)" "WARN"
-                                            }
-                                        }
-                                    }
-
-                                    $delP = @{ Container = $item.Container; Blob = $item.Blob; Context = $deleteCtx; Force = $true }
-                                    if ($item.VersionId) { $delP['VersionId'] = $item.VersionId }
-
-                                    $null = Remove-AzStorageBlob @delP -ErrorAction Stop
-
-                                    $pageRemoved++; $stats.Removed++; $stats.BytesRemoved += $item.Size
-                                    $ctrRemoved++
-                                    ResetConsecutiveErrors
-
-                                    if ($verbose -or $actionIdx -le 5 -or $actionIdx % 100 -eq 0 -or $actionIdx -eq $pageEligible.Count) {
-                                        Log "    [$actionIdx/$($pageEligible.Count)] REMOVED: '$($item.Blob)'$vLabel ($(FmtSize $item.Size))" "SUCCESS"
-                                    }
-                                }
-                                catch {
-                                    $e = $_.Exception.Message
-                                    if ($e -match 'BlobNotFound|404|does not exist') { ResetConsecutiveErrors }
-                                    elseif ($delRetry -lt $MaxRetryAttempts -and (Test-TransientAzError -Message $e)) {
-                                        $delRetry++
-                                        Start-Sleep -Seconds ([math]::Min(30, $RetryDelaySeconds * [math]::Pow(2, $delRetry - 1)))
-                                        continue delRetry
-                                    }
-                                    else { AddError "RemoveBlob($($item.Blob))" $e }
-                                }
-                                break
-                                }
+                        # Obter storage key se não temos (necessário para subprocess)
+                        if (-not $storageKey) {
+                            try {
+                                $keys = Get-AzStorageAccountKey -ResourceGroupName $acctRG -Name $acctName -ErrorAction Stop
+                                $storageKey = $keys[0].Value
+                            } catch {
+                                Log "    ERRO: Não foi possível obter key para subprocess. Abortando deleção." "ERROR"
+                                AddError "GetKey($acctName)" $_.Exception.Message
+                                $storageKey = $null
                             }
                         }
-                        $deleteCtx = $null
+
+                        if ($storageKey) {
+                            # Serializar lista para temp file (JSON lines — um blob por linha)
+                            $batchDir = Join-Path $OutputPath ".batches_$ts"
+                            if (-not (Test-Path $batchDir)) { New-Item -ItemType Directory -Path $batchDir -Force | Out-Null }
+
+                            for ($bi = 0; $bi -lt $totalEligible; $bi += $batchSize) {
+                                $batchNum++
+                                $batchEnd = [math]::Min($bi + $batchSize, $totalEligible)
+                                $batchItems = $pageEligible.GetRange($bi, $batchEnd - $bi)
+                                $batchFile = Join-Path $batchDir "batch_${pageNum}_${batchNum}.json"
+                                $resultFile = Join-Path $batchDir "result_${pageNum}_${batchNum}.json"
+
+                                # Escrever batch em disco
+                                $batchItems | ConvertTo-Json -Depth 3 -Compress | Out-File -FilePath $batchFile -Encoding utf8
+
+                                Log "    Batch $batchNum [$($bi+1)..$batchEnd/$totalEligible]: spawning subprocess..." "INFO"
+
+                                # Subprocess: roda deleção isolada, retorna resultado em JSON
+                                $subScript = @"
+`$ErrorActionPreference = 'Continue'
+Import-Module Az.Storage -ErrorAction Stop
+`$ctx = New-AzStorageContext -StorageAccountName '$acctName' -StorageAccountKey '$storageKey'
+`$items = Get-Content '$batchFile' -Raw | ConvertFrom-Json
+if (`$items -isnot [array]) { `$items = @(`$items) }
+`$removed = 0; `$errors = 0; `$polRemoved = 0; `$bytesRemoved = [long]0; `$errList = @()
+`$doRemove = `$$($modeRemove.ToString().ToLower()); `$doPolicyOnly = `$$($modePolicyOnly.ToString().ToLower())
+foreach (`$item in `$items) {
+    try {
+        `$polP = @{ Container = `$item.Container; Blob = `$item.Blob; Context = `$ctx }
+        if (`$doPolicyOnly) {
+            `$null = Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop
+            `$polRemoved++
+        } elseif (`$doRemove) {
+            if (`$item.Mode) {
+                try { `$null = Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop; `$polRemoved++ }
+                catch { if (`$_.Exception.Message -notmatch 'BlobNotFound|404|does not exist') {} }
+            }
+            `$delP = @{ Container = `$item.Container; Blob = `$item.Blob; Context = `$ctx; Force = `$true }
+            if (`$item.VersionId) { `$delP['VersionId'] = `$item.VersionId }
+            `$null = Remove-AzStorageBlob @delP -ErrorAction Stop
+            `$removed++; `$bytesRemoved += `$item.Size
+        }
+    } catch {
+        `$e = `$_.Exception.Message
+        if (`$e -match 'BlobNotFound|404|does not exist') { <# OK #> }
+        else { `$errors++; if (`$errList.Count -lt 10) { `$errList += `$e } }
+    }
+}
+@{ Removed = `$removed; Errors = `$errors; PoliciesRemoved = `$polRemoved; BytesRemoved = `$bytesRemoved; ErrorList = `$errList } |
+    ConvertTo-Json -Compress | Out-File -FilePath '$resultFile' -Encoding utf8
+"@
+                                # Executar subprocess
+                                $subProc = Start-Process -FilePath "pwsh" -ArgumentList "-NoProfile","-NonInteractive","-Command",$subScript `
+                                    -Wait -PassThru -NoNewWindow -RedirectStandardError ([System.IO.Path]::GetTempFileName())
+
+                                # Ler resultado
+                                if (Test-Path $resultFile) {
+                                    try {
+                                        $bResult = Get-Content $resultFile -Raw | ConvertFrom-Json
+                                        $pageRemoved += $bResult.Removed
+                                        $stats.Removed += $bResult.Removed
+                                        $stats.BytesRemoved += $bResult.BytesRemoved
+                                        $stats.PoliciesRemoved += $bResult.PoliciesRemoved
+                                        $ctrRemoved += $bResult.Removed
+                                        $pageErrors += $bResult.Errors
+                                        $stats.Errors += $bResult.Errors
+                                        if ($bResult.Removed -gt 0) { ResetConsecutiveErrors }
+                                        foreach ($errMsg in $bResult.ErrorList) {
+                                            if ($stats.ErrorList.Count -lt 200) { $stats.ErrorList.Add("[SubBatch$batchNum] $errMsg") }
+                                        }
+                                        Log "    Batch $batchNum: $($bResult.Removed) removidos, $($bResult.Errors) erros ($(FmtSize $bResult.BytesRemoved))" "SUCCESS"
+                                    } catch {
+                                        Log "    Batch $batchNum: erro lendo resultado: $($_.Exception.Message)" "ERROR"
+                                        $pageErrors++; $stats.Errors++
+                                    }
+                                    Remove-Item $resultFile -Force -ErrorAction SilentlyContinue
+                                } else {
+                                    Log "    Batch $batchNum: subprocess não gerou resultado (exit code: $($subProc.ExitCode))" "ERROR"
+                                    $pageErrors += $batchItems.Count; $stats.Errors += $batchItems.Count
+                                }
+                                Remove-Item $batchFile -Force -ErrorAction SilentlyContinue
+
+                                if (Test-MaxErrorsReached) { break }
+                            }
+                            # Limpar dir de batches
+                            Remove-Item $batchDir -Recurse -Force -ErrorAction SilentlyContinue
+                        }
                     }
 
                     $actionDur = ((Get-Date) - $actionStart).TotalSeconds
