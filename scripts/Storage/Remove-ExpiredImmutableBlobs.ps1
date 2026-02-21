@@ -522,7 +522,7 @@ $acctIdx = 0
 
                         # Extrair campos leves do blob pesado
                         $bName = $_.Name
-                        $bVersionId = $null; try { $bVersionId = $_.VersionId } catch {}
+                        $bVersionId = $null; try { $vid = $_.VersionId; if ($vid) { $bVersionId = if ($vid -is [string]) { $vid } else { $vid.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ") } } } catch {}
                         $bIsCurrent = $null; try { $bIsCurrent = $_.IsCurrentVersion } catch {}
                         $bLength = $_.Length
                         $bTier = $_.AccessTier
