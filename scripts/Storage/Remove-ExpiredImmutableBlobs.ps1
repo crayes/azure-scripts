@@ -794,8 +794,20 @@ param(
 $ErrorActionPreference = 'Continue'
 Import-Module Az.Storage -ErrorAction Stop
 $ctx = New-AzStorageContext -StorageAccountName $AccountName -StorageAccountKey $AccountKey
-$items = Get-Content $BatchFile -Raw | ConvertFrom-Json
-if ($items -isnot [array]) { $items = @($items) }
+# Parse JSON manual — ConvertFrom-Json converte VersionId ISO para DateTime local, Azure rejeita
+$items = [System.Collections.Generic.List[hashtable]]::new()
+foreach ($line in [System.IO.File]::ReadAllLines($BatchFile)) {
+    $line = $line.Trim().TrimEnd(',')
+    if ($line -match '^\{') {
+        $h = @{}
+        foreach ($m in [regex]::Matches($line, '"(\w+)"\s*:\s*(?:"([^"]*)"|([\d.]+)|null)')) {
+            $k = $m.Groups[1].Value
+            if ($m.Groups[2].Success) { $h[$k] = $m.Groups[2].Value }
+            elseif ($m.Groups[3].Success) { $h[$k] = [long]$m.Groups[3].Value }
+        }
+        $items.Add($h)
+    }
+}
 $removed = 0; $errors = 0; $polRemoved = 0; $bytesRemoved = [long]0; $errList = @()
 foreach ($item in $items) {
     try {
