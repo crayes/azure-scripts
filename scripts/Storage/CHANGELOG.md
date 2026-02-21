@@ -1,11 +1,12 @@
 # Remove-ExpiredImmutableBlobs — Changelog
 
-## v3.3.0 (2026-02-20) — Controle de memória e estabilidade em Windows
+## v3.3.0 (2026-02-20) — Controle de memória e estabilidade cross-platform
 
 ### Correções de estabilidade
 - Mitigação de crescimento de memória em varreduras longas: resultados detalhados agora são limitados por `-MaxDetailedResults` (padrão 1000)
 - Novo memory guard adaptativo para reduzir `PageSize` automaticamente quando o uso de memória do processo passa do limite configurado
-- Ajuste automático de `PageSize` para `1000` em Windows com baixa RAM quando `-PageSize` não é informado
+- Ajuste automático de `PageSize` para `1000` em ambientes de baixa RAM quando `-PageSize` não é informado
+- Correção de compatibilidade em macOS/Linux: variáveis internas renomeadas para evitar conflito com variáveis automáticas read-only (`$IsMacOS`/`$IsLinux`)
 
 ### Novos parâmetros
 | Parâmetro | Tipo | Padrão | Descrição |

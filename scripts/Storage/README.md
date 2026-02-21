@@ -24,7 +24,7 @@ Este script automatiza todo o processo: identifica blobs expirados, remove a pol
 - **Progress inline**: Contador atualizado em tempo real durante análise (sem spam de linhas)
 - **Retry com backoff**: Reexecução automática para falhas transitórias (429/timeout/5xx)
 - **Perfis de execução**: presets para estabilidade/desempenho sem alterar a lógica funcional
-- **Memory guard adaptativo**: reduz `PageSize` automaticamente sob alta pressão de memória (especialmente em Windows com pouca RAM)
+- **Memory guard adaptativo**: reduz `PageSize` automaticamente sob alta pressão de memória (Windows, macOS e Linux)
 - **Limite de resultados detalhados**: controla crescimento de memória no relatório/CSV sem perder contadores globais
 - **Relatório HTML**: Dashboard visual com estatísticas e tabela de blobs
 - **Export CSV**: Dados estruturados para análise em Excel
@@ -182,7 +182,7 @@ Gera dashboard em `./Reports/ImmutabilityAudit_<timestamp>.html` com:
 - Modo destrutivo exige confirmação textual (`CONFIRMAR`) quando não usa `-Force`
 - Login Azure com fallback automático para Device Code quando necessário
 - Memória liberada página a página para containers grandes (10TB+)
-- Em Windows com pouca RAM, o script pode reduzir automaticamente o `PageSize` quando o uso de memória sobe
+- Em ambientes com pouca RAM (Windows, macOS ou Linux), o script pode reduzir automaticamente o `PageSize` quando o uso de memória sobe
 - O detalhamento no relatório pode ser truncado para manter estabilidade; os contadores globais continuam íntegros
 
 ## Permissões necessárias
