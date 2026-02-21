@@ -4,36 +4,30 @@
 
 .DESCRIPTION
     Varre Storage Accounts, identifica blobs com imutabilidade expirada, e os remove.
-    Processa em lotes de $PageSize blobs (máximo 5000 do Azure SDK) para suportar containers 10TB+.
+    v4.0 — reescrita focada em estabilidade de memória:
+      • Pipeline streaming: processa um blob por vez, sem acumular arrays
+      • Resultados em disco: CSV temporário, não acumula em RAM
+      • Checkpoint/resume: salva progresso por página, retoma de onde parou
+      • Deleção paralela: configurable ThrottleLimit com ForEach-Object -Parallel
     Arquivo único — sem dependências externas.
 
-.PARAMETER StorageAccountName
-    Nome do Storage Account. Se omitido, varre todos na subscription.
+.PARAMETER ResumeFrom
+    Caminho do arquivo de checkpoint para retomar execução interrompida.
 
-.PARAMETER ContainerName
-    Nome do container. Se omitido, varre todos no Storage Account.
+.PARAMETER ThrottleLimit
+    Número de threads paralelas para deleção. Padrão: 1 (sequencial). Recomendado: 4-8.
 
-.PARAMETER DryRun
-    Modo simulação — lista blobs elegíveis sem remover nada. É o padrão.
-
-.PARAMETER RemoveBlobs
-    Remove blobs com imutabilidade expirada. Pede confirmação antes de executar.
-
-.PARAMETER RemoveImmutabilityPolicyOnly
-    Remove apenas a política de imutabilidade, mantendo o blob.
-
-.PARAMETER ExecutionProfile
-    Preset operacional para estabilidade/desempenho sem alterar a lógica funcional.
-    Opções: Manual, Conservative, Balanced, Aggressive.
+.PARAMETER MaxErrors
+    Máximo de erros antes de abortar. Padrão: 0 (sem limite).
 
 .EXAMPLE
     .\Remove-ExpiredImmutableBlobs.ps1 -StorageAccountName "storage2025v2" -DryRun
-    .\Remove-ExpiredImmutableBlobs.ps1 -StorageAccountName "storage2025v2" -RemoveBlobs
-    .\Remove-ExpiredImmutableBlobs.ps1 -RemoveBlobs -MinAccountSizeTB 10
-    .\Remove-ExpiredImmutableBlobs.ps1 -RemoveBlobs -ExecutionProfile Balanced -Force -Confirm:`$false
+    .\Remove-ExpiredImmutableBlobs.ps1 -StorageAccountName "storage2025v2" -RemoveBlobs -ThrottleLimit 8
+    .\Remove-ExpiredImmutableBlobs.ps1 -ResumeFrom "./Reports/checkpoint_20260221.json"
+    .\Remove-ExpiredImmutableBlobs.ps1 -RemoveBlobs -ExecutionProfile Balanced -Force -Confirm:$false
 
 .NOTES
-    Versão: 3.3.0 | Requer: Az.Accounts, Az.Storage | PowerShell 7.0+
+    Versão: 4.0.0 | Requer: Az.Accounts, Az.Storage | PowerShell 7.0+
 #>
 
 #Requires -Version 7.0
@@ -45,9 +39,10 @@ param(
     [string]$ResourceGroupName,
     [string]$StorageAccountName,
     [string]$ContainerName,
+    [string]$BlobPrefix,
 
-    [Parameter(ParameterSetName = 'DryRun')]         [switch]$DryRun,
-    [Parameter(ParameterSetName = 'RemoveBlobs')]    [switch]$RemoveBlobs,
+    [Parameter(ParameterSetName = 'DryRun')]          [switch]$DryRun,
+    [Parameter(ParameterSetName = 'RemoveBlobs')]     [switch]$RemoveBlobs,
     [Parameter(ParameterSetName = 'RemovePolicyOnly')][switch]$RemoveImmutabilityPolicyOnly,
 
     [string]$OutputPath = "./Reports",
@@ -62,89 +57,39 @@ param(
     [int]$MaxDaysExpired = 0,
     [int]$MinAccountSizeTB = 0,
     [ValidateRange(10, 5000)] [int]$PageSize = 5000,
-    [ValidateRange(100, 500000)] [int]$MaxDetailedResults = 1000,
-    [ValidateRange(70, 99)] [int]$MemoryUsageHighWatermarkPercent = 90,
-    [ValidateRange(100, 5000)] [int]$MinAdaptivePageSize = 1000,
-    [switch]$DisableMemoryGuard
+    [ValidateRange(1, 32)] [int]$ThrottleLimit = 1,
+    [int]$MaxErrors = 0,
+    [string]$ResumeFrom,
+    [switch]$DisableCheckpoint,
+    [ValidateRange(10, 10000)] [int]$MaxReportRows = 5000
 )
 
 # ============================================================================
 # CONFIGURAÇÃO
 # ============================================================================
-$version = "3.3.0"
+$version = "4.0.0"
 $now = [DateTimeOffset]::UtcNow
 $startTime = Get-Date
 
-# Determinar modo
 $modeDryRun = -not $RemoveBlobs.IsPresent -and -not $RemoveImmutabilityPolicyOnly.IsPresent
 $modeRemove = $RemoveBlobs.IsPresent
 $modePolicyOnly = $RemoveImmutabilityPolicyOnly.IsPresent
 $verbose = $VerboseProgress.IsPresent
 
-# Perfis operacionais (não alteram lógica funcional; apenas tuning de execução)
+# Perfis operacionais
 if ($ExecutionProfile -ne 'Manual') {
     $profileSettings = switch ($ExecutionProfile) {
-        'Conservative' { @{ PageSize = 1000; MaxRetryAttempts = 5; RetryDelaySeconds = 3 } }
-        'Balanced'     { @{ PageSize = 2500; MaxRetryAttempts = 4; RetryDelaySeconds = 2 } }
-        'Aggressive'   { @{ PageSize = 5000; MaxRetryAttempts = 3; RetryDelaySeconds = 1 } }
+        'Conservative' { @{ PageSize = 1000; MaxRetryAttempts = 5; RetryDelaySeconds = 3; ThrottleLimit = 2 } }
+        'Balanced'     { @{ PageSize = 2500; MaxRetryAttempts = 4; RetryDelaySeconds = 2; ThrottleLimit = 4 } }
+        'Aggressive'   { @{ PageSize = 5000; MaxRetryAttempts = 3; RetryDelaySeconds = 1; ThrottleLimit = 8 } }
         default        { $null }
     }
-
     if ($null -ne $profileSettings) {
-        if (-not $PSBoundParameters.ContainsKey('PageSize')) { $PageSize = $profileSettings.PageSize }
-        if (-not $PSBoundParameters.ContainsKey('MaxRetryAttempts')) { $MaxRetryAttempts = $profileSettings.MaxRetryAttempts }
-        if (-not $PSBoundParameters.ContainsKey('RetryDelaySeconds')) { $RetryDelaySeconds = $profileSettings.RetryDelaySeconds }
+        if (-not $PSBoundParameters.ContainsKey('PageSize'))        { $PageSize = $profileSettings.PageSize }
+        if (-not $PSBoundParameters.ContainsKey('MaxRetryAttempts')){ $MaxRetryAttempts = $profileSettings.MaxRetryAttempts }
+        if (-not $PSBoundParameters.ContainsKey('RetryDelaySeconds')){ $RetryDelaySeconds = $profileSettings.RetryDelaySeconds }
+        if (-not $PSBoundParameters.ContainsKey('ThrottleLimit'))   { $ThrottleLimit = $profileSettings.ThrottleLimit }
     }
-}
-
-# Guardião de memória (cross-platform)
-$script:IsWindowsOS = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)
-$script:IsMacPlatform = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::OSX)
-$script:IsLinuxPlatform = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Linux)
-$script:MemoryGuardEnabled = -not $DisableMemoryGuard.IsPresent
-$script:TotalPhysicalMemoryBytes = [long]0
-
-function Get-TotalPhysicalMemoryBytes {
-    if ($script:IsWindowsOS) {
-        $memInfo = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
-        return [long]$memInfo.TotalPhysicalMemory
-    }
-
-    if ($script:IsMacPlatform) {
-        $memRaw = (& sysctl -n hw.memsize 2>$null)
-        if ([string]::IsNullOrWhiteSpace($memRaw)) { return [long]0 }
-        return [long]$memRaw
-    }
-
-    if ($script:IsLinuxPlatform) {
-        if (-not (Test-Path '/proc/meminfo')) { return [long]0 }
-        $line = (Get-Content '/proc/meminfo' -ErrorAction Stop | Where-Object { $_ -match '^MemTotal:\s+\d+\s+kB' } | Select-Object -First 1)
-        if ([string]::IsNullOrWhiteSpace($line)) { return [long]0 }
-        $kb = [long](($line -replace '^MemTotal:\s+','' -replace '\s+kB$','').Trim())
-        return $kb * 1KB
-    }
-
-    return [long]0
-}
-
-if ($script:MemoryGuardEnabled) {
-    try {
-        $script:TotalPhysicalMemoryBytes = Get-TotalPhysicalMemoryBytes
-        if ($script:TotalPhysicalMemoryBytes -le 0) {
-            $script:MemoryGuardEnabled = $false
-        }
-    }
-    catch {
-        $script:MemoryGuardEnabled = $false
-    }
-}
-
-if ($MinAdaptivePageSize -gt $PageSize) {
-    $MinAdaptivePageSize = $PageSize
-}
-
-if (-not $PSBoundParameters.ContainsKey('PageSize') -and $script:TotalPhysicalMemoryBytes -gt 0 -and $script:TotalPhysicalMemoryBytes -le 20GB) {
-    $PageSize = 1000
 }
 
 # Contadores
@@ -152,18 +97,30 @@ $stats = @{
     Accounts = 0; Containers = 0; ContainersWithPolicy = 0
     Blobs = 0; Pages = 0
     Expired = 0; Active = 0; LegalHold = 0
-    Eligible = 0; Removed = 0; PoliciesRemoved = 0; Errors = 0
+    Eligible = 0; Removed = 0; PoliciesRemoved = 0; Errors = 0; ConsecutiveErrors = 0
     BytesScanned = [long]0; BytesEligible = [long]0; BytesRemoved = [long]0
-    DetailedRowsDropped = 0
     ErrorList = [System.Collections.Generic.List[string]]::new()
 }
 
-# Resultados para relatório
-$allResults = [System.Collections.Generic.List[PSCustomObject]]::new()
+# Container info para relatório (lightweight — um registro por container, não por blob)
 $containerInfo = [System.Collections.Generic.List[PSCustomObject]]::new()
 
+# Arquivo temporário para resultados detalhados (DISCO, não memória)
+if (-not (Test-Path $OutputPath)) { New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null }
+$ts = Get-Date -Format "yyyyMMdd_HHmmss"
+$tempCsvPath = Join-Path $OutputPath ".temp_results_$ts.csv"
+$reportRowsWritten = 0
+
+# Inicializar CSV temporário com headers
+"Account,Container,Blob,VersionId,IsCurrent,Size,SizeFmt,Tier,ExpiresOn,Mode,LegalHold,Status,DaysExp,Eligible,Action" |
+    Out-File -FilePath $tempCsvPath -Encoding utf8
+
+# Checkpoint
+$checkpointPath = Join-Path $OutputPath "checkpoint_$ts.json"
+$resumeState = $null
+
 # ============================================================================
-# FUNÇÕES AUXILIARES (inline — sem módulos externos)
+# FUNÇÕES AUXILIARES
 # ============================================================================
 function Log {
     param([string]$Msg, [string]$Level = "INFO")
@@ -194,101 +151,52 @@ function FmtSize {
 
 function Throughput { param([int]$N, [datetime]$Since); $s = ((Get-Date)-$Since).TotalSeconds; if($s -gt 0){"$([math]::Round($N/$s,1))/s"}else{"--"} }
 
-function AddError { param([string]$Ctx, [string]$Err); $stats.Errors++; $stats.ErrorList.Add("[$Ctx] $Err"); Log "[$Ctx] $Err" "ERROR" }
-
-function Get-ProcessMemoryUsagePercent {
-    if (-not $script:MemoryGuardEnabled -or $script:TotalPhysicalMemoryBytes -le 0) { return $null }
-
-    try {
-        $ws = [System.Diagnostics.Process]::GetCurrentProcess().WorkingSet64
-        return [int][math]::Round(($ws / $script:TotalPhysicalMemoryBytes) * 100, 0)
-    }
-    catch {
-        return $null
-    }
+function AddError {
+    param([string]$Ctx, [string]$Err)
+    $stats.Errors++
+    $stats.ConsecutiveErrors++
+    if ($stats.ErrorList.Count -lt 200) { $stats.ErrorList.Add("[$Ctx] $Err") }
+    Log "[$Ctx] $Err" "ERROR"
 }
 
-function Invoke-AdaptiveMemoryGuard {
-    param(
-        [int]$CurrentPageSize,
-        [int]$MinPageSize,
-        [int]$HighWatermarkPercent
-    )
+function ResetConsecutiveErrors { $stats.ConsecutiveErrors = 0 }
 
-    $usage = Get-ProcessMemoryUsagePercent
-    if ($null -eq $usage) {
-        return [PSCustomObject]@{ AdjustedPageSize = $CurrentPageSize; UsagePercent = $null; Changed = $false }
+function Test-MaxErrorsReached {
+    if ($MaxErrors -gt 0 -and $stats.Errors -ge $MaxErrors) {
+        Log "ABORTANDO: limite de $MaxErrors erros atingido." "ERROR"
+        return $true
     }
+    return $false
+}
 
-    if ($usage -lt $HighWatermarkPercent -or $CurrentPageSize -le $MinPageSize) {
-        return [PSCustomObject]@{ AdjustedPageSize = $CurrentPageSize; UsagePercent = $usage; Changed = $false }
-    }
-
-    $target = [int][math]::Floor($CurrentPageSize * 0.75)
-    $newPageSize = [math]::Max($MinPageSize, $target)
-
-    return [PSCustomObject]@{ AdjustedPageSize = $newPageSize; UsagePercent = $usage; Changed = ($newPageSize -lt $CurrentPageSize) }
+function InlineProgress {
+    param([string]$Msg, [string]$Color = "Yellow")
+    Write-Host "`r$(' ' * 140)`r" -NoNewline
+    Write-Host $Msg -ForegroundColor $Color -NoNewline
 }
 
 function Test-BlobNotFoundError {
     param([string]$Message)
     if ([string]::IsNullOrWhiteSpace($Message)) { return $false }
-
-    return (
-        $Message -match '(?i)\bBlobNotFound\b' -or
-        $Message -match '(?i)\bStatus:\s*404\b' -or
-        $Message -match '(?i)\bThe specified blob does not exist\b'
-    )
+    return ($Message -match '(?i)\bBlobNotFound\b' -or $Message -match '(?i)\bStatus:\s*404\b' -or $Message -match '(?i)\bThe specified blob does not exist\b')
 }
 
 function Test-TransientAzError {
     param([string]$Message)
     if ([string]::IsNullOrWhiteSpace($Message)) { return $false }
-
     if (Test-BlobNotFoundError -Message $Message) { return $false }
-
-    $patterns = @(
-        '(?i)\bStatus:\s*429\b',
-        '(?i)\bStatus:\s*5\d{2}\b',
-        '(?i)\bTooManyRequests\b',
-        '(?i)\bServerBusy\b',
-        '(?i)\bOperationTimedOut\b',
-        '(?i)\btimed out\b',
-        '(?i)\btimeout\b',
-        '(?i)\btemporar(?:y|ily)\b',
-        '(?i)\bInternalServerError\b',
-        '(?i)\bServiceUnavailable\b',
-        '(?i)\bBadGateway\b',
-        '(?i)\bGatewayTimeout\b'
-    )
-
-    foreach ($p in $patterns) {
-        if ($Message -match $p) { return $true }
-    }
+    $patterns = @('(?i)\bStatus:\s*429\b','(?i)\bStatus:\s*5\d{2}\b','(?i)\bTooManyRequests\b','(?i)\bServerBusy\b','(?i)\bOperationTimedOut\b','(?i)\btimed?\s*out\b','(?i)\btemporar','(?i)\bInternalServerError\b','(?i)\bServiceUnavailable\b','(?i)\bBadGateway\b','(?i)\bGatewayTimeout\b')
+    foreach ($p in $patterns) { if ($Message -match $p) { return $true } }
     return $false
 }
 
 function Invoke-WithRetry {
-    param(
-        [scriptblock]$Operation,
-        [string]$Context,
-        [int]$Attempts = 3,
-        [int]$BaseDelaySeconds = 2
-    )
-
+    param([scriptblock]$Operation, [string]$Context, [int]$Attempts = 3, [int]$BaseDelaySeconds = 2)
     for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
-        try {
-            return & $Operation
-        }
+        try { return & $Operation }
         catch {
             $msg = $_.Exception.Message
-            $isLast = $attempt -ge $Attempts
-            $isTransient = Test-TransientAzError -Message $msg
-
-            if ($isLast -or -not $isTransient) {
-                throw
-            }
-
+            if ($attempt -ge $Attempts -or -not (Test-TransientAzError -Message $msg)) { throw }
             $delay = [math]::Min(30, [math]::Max(1, ($BaseDelaySeconds * [math]::Pow(2, $attempt - 1))))
             Log "[$Context] falha transitória ($attempt/$Attempts): $msg | retry em ${delay}s" "WARN"
             Start-Sleep -Seconds $delay
@@ -296,11 +204,63 @@ function Invoke-WithRetry {
     }
 }
 
-# Inline progress — escreve na mesma linha sem pular
-function InlineProgress {
-    param([string]$Msg, [string]$Color = "Yellow")
-    Write-Host "`r$(' ' * 130)`r" -NoNewline
-    Write-Host $Msg -ForegroundColor $Color -NoNewline
+# Escrever uma linha no CSV temporário em disco (não acumula em memória)
+function Write-ResultToDisk {
+    param([hashtable]$R)
+    if ($script:reportRowsWritten -ge $MaxReportRows) { return }
+    $expOn = if ($R.ExpiresOn) { ([DateTimeOffset]$R.ExpiresOn).ToString('yyyy-MM-dd HH:mm:ss') } else { '' }
+    $line = '"{0}","{1}","{2}","{3}","{4}",{5},"{6}","{7}","{8}","{9}",{10},"{11}",{12},{13},"{14}"' -f `
+        $R.Account, $R.Container, ($R.Blob -replace '"','""'), $R.VersionId, $R.IsCurrent,
+        $R.Size, (FmtSize $R.Size), $R.Tier, $expOn, $R.Mode, $R.HasLegalHold,
+        $R.Status, $R.DaysExp, $R.Eligible, $R.Action
+    $line | Out-File -FilePath $tempCsvPath -Encoding utf8 -Append
+    $script:reportRowsWritten++
+}
+
+# Checkpoint: salvar estado para resume
+function Save-Checkpoint {
+    param(
+        [string]$AccountName, [string]$Container,
+        [int]$PageNum, $Token, [hashtable]$Stats,
+        [string]$Phase  # 'scanning' or 'complete'
+    )
+    if ($DisableCheckpoint.IsPresent) { return }
+    $cp = @{
+        Version        = $version
+        Timestamp      = (Get-Date -Format 'o')
+        Phase          = $Phase
+        AccountName    = $AccountName
+        ContainerName  = $Container
+        PageNum        = $PageNum
+        HasToken       = ($null -ne $Token)
+        Stats          = @{
+            Accounts = $Stats.Accounts; Containers = $Stats.Containers
+            Blobs = $Stats.Blobs; Pages = $Stats.Pages
+            Expired = $Stats.Expired; Active = $Stats.Active; LegalHold = $Stats.LegalHold
+            Eligible = $Stats.Eligible; Removed = $Stats.Removed; PoliciesRemoved = $Stats.PoliciesRemoved
+            Errors = $Stats.Errors
+            BytesScanned = $Stats.BytesScanned; BytesEligible = $Stats.BytesEligible; BytesRemoved = $Stats.BytesRemoved
+        }
+        Parameters     = @{
+            SubscriptionId     = $SubscriptionId
+            ResourceGroupName  = $ResourceGroupName
+            StorageAccountName = $StorageAccountName
+            ContainerName      = $ContainerName
+            PageSize           = $PageSize
+            MaxDaysExpired     = $MaxDaysExpired
+            MinAccountSizeTB   = $MinAccountSizeTB
+            BlobPrefix         = $BlobPrefix
+        }
+    }
+    $cp | ConvertTo-Json -Depth 5 | Out-File -FilePath $checkpointPath -Encoding utf8 -Force
+}
+
+function Load-Checkpoint {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { Log "Checkpoint não encontrado: $Path" "ERROR"; exit 1 }
+    $cp = Get-Content $Path -Raw | ConvertFrom-Json
+    Log "Checkpoint carregado: conta='$($cp.AccountName)' container='$($cp.ContainerName)' página=$($cp.PageNum) blobs=$($cp.Stats.Blobs)" "SUCCESS"
+    return $cp
 }
 
 # ============================================================================
@@ -313,49 +273,56 @@ Write-Host "  ============================================================" -For
 Write-Host ""
 
 $modeLabel = if ($modeRemove) { "REMOVER BLOBS" } elseif ($modePolicyOnly) { "REMOVER POLÍTICAS" } else { "SIMULAÇÃO (DryRun)" }
-Log "Modo: $modeLabel | PageSize: $PageSize" "SECTION"
-Log "Perfil execução: $ExecutionProfile | Retry: $MaxRetryAttempts tentativa(s), delay base ${RetryDelaySeconds}s" "INFO"
-if ($EnableAzCmdletVerbose.IsPresent) {
-    Log "Verbose Az cmdlets: ATIVADO (maior uso de memória/saída)" "WARN"
-}
-else {
-    Log "Verbose Az cmdlets: DESATIVADO (estável). Use -EnableAzCmdletVerbose só para troubleshooting." "INFO"
-}
-if ($script:MemoryGuardEnabled -and $script:TotalPhysicalMemoryBytes -gt 0) {
-    Log "Memory guard: ATIVO | RAM: $(FmtSize $script:TotalPhysicalMemoryBytes) | HighWatermark: ${MemoryUsageHighWatermarkPercent}% | MinAdaptivePageSize: $MinAdaptivePageSize" "INFO"
-}
-elseif ($DisableMemoryGuard.IsPresent) {
-    Log "Memory guard: DESATIVADO via -DisableMemoryGuard" "WARN"
-}
+Log "Modo: $modeLabel | PageSize: $PageSize | Threads: $ThrottleLimit" "SECTION"
+Log "Perfil: $ExecutionProfile | Retry: ${MaxRetryAttempts}x, delay base ${RetryDelaySeconds}s" "INFO"
+if ($ThrottleLimit -gt 1) { Log "Deleção PARALELA: $ThrottleLimit threads" "INFO" }
+if ($MaxErrors -gt 0)     { Log "Abort após $MaxErrors erros" "INFO" }
+if ($BlobPrefix)           { Log "Prefixo: '$BlobPrefix'" "INFO" }
+if ($MaxDaysExpired -gt 0) { Log "Filtro: expirados há >$MaxDaysExpired dias" "INFO" }
+if ($MinAccountSizeTB -gt 0) { Log "Threshold: contas >=${MinAccountSizeTB}TB" "INFO" }
 if ($verbose) { Log "Verbose: ATIVADO" "INFO" }
-if ($MaxDaysExpired -gt 0) { Log "Filtro: apenas expirados há >$MaxDaysExpired dias" "INFO" }
-if ($MinAccountSizeTB -gt 0) { Log "Threshold: ação apenas em contas >=${MinAccountSizeTB}TB" "INFO" }
-if ($MaxDetailedResults -gt 0) { Log "Relatório detalhado limitado a $MaxDetailedResults linha(s) para controlar memória" "INFO" }
+
+Log "Resultados em disco: $tempCsvPath (max $MaxReportRows linhas)" "INFO"
+if (-not $DisableCheckpoint.IsPresent) { Log "Checkpoint: $checkpointPath" "INFO" }
+
+# Carregar checkpoint de resume se fornecido
+if ($ResumeFrom) {
+    $resumeState = Load-Checkpoint -Path $ResumeFrom
+    $stats.Accounts        = $resumeState.Stats.Accounts
+    $stats.Containers      = $resumeState.Stats.Containers
+    $stats.Blobs           = $resumeState.Stats.Blobs
+    $stats.Pages           = $resumeState.Stats.Pages
+    $stats.Expired         = $resumeState.Stats.Expired
+    $stats.Active          = $resumeState.Stats.Active
+    $stats.LegalHold       = $resumeState.Stats.LegalHold
+    $stats.Eligible        = $resumeState.Stats.Eligible
+    $stats.Removed         = $resumeState.Stats.Removed
+    $stats.PoliciesRemoved = $resumeState.Stats.PoliciesRemoved
+    $stats.Errors          = $resumeState.Stats.Errors
+    $stats.BytesScanned    = $resumeState.Stats.BytesScanned
+    $stats.BytesEligible   = $resumeState.Stats.BytesEligible
+    $stats.BytesRemoved    = $resumeState.Stats.BytesRemoved
+    Log "Stats restaurados: $($stats.Blobs) blobs, $($stats.Removed) removidos, $($stats.Errors) erros" "INFO"
+}
 
 # ============================================================================
-# CONFIRMAÇÃO (modos destrutivos)
+# CONFIRMAÇÃO
 # ============================================================================
-if ($modeRemove -or $modePolicyOnly) {
+if (($modeRemove -or $modePolicyOnly) -and -not $ResumeFrom) {
     if (-not $Force) {
         $canPrompt = $true
         try { $null = $Host.UI.RawUI } catch { $canPrompt = $false }
-
-        if (-not $canPrompt) {
-            Log "Sessão não interativa detectada. Use -Force para executar modo destrutivo sem prompt textual." "ERROR"
-            exit 1
-        }
-
+        if (-not $canPrompt) { Log "Sessão não-interativa. Use -Force." "ERROR"; exit 1 }
         Write-Host ""
         Write-Host "  ╔══════════════════════════════════════════════════════════╗" -ForegroundColor Red
         Write-Host "  ║  ATENÇÃO: MODO DESTRUTIVO — $($modeLabel.PadRight(28)) ║" -ForegroundColor Red
         Write-Host "  ╚══════════════════════════════════════════════════════════╝" -ForegroundColor Red
         Write-Host ""
         $confirm = Read-Host "  Digite 'CONFIRMAR' para prosseguir"
-        if ($confirm -ine 'CONFIRMAR') { Log "Cancelado pelo usuário." "WARN"; exit 0 }
+        if ($confirm -ine 'CONFIRMAR') { Log "Cancelado." "WARN"; exit 0 }
         Write-Host ""
-    }
-    else {
-        Log "Flag -Force detectada: pulando prompt textual de confirmação." "WARN"
+    } else {
+        Log "Flag -Force: pulando confirmação." "WARN"
     }
 }
 
@@ -366,14 +333,9 @@ Log "Verificando conexão Azure..." "INFO"
 try {
     $ctx = Get-AzContext
     if (-not $ctx) {
-        Log "Não conectado. Iniciando login Azure..." "WARN"
-        try {
-            Connect-AzAccount -ErrorAction Stop | Out-Null
-        }
-        catch {
-            Log "Login interativo padrão falhou. Tentando autenticação por device code (compatível com macOS/Windows)..." "WARN"
-            Connect-AzAccount -UseDeviceAuthentication -ErrorAction Stop | Out-Null
-        }
+        Log "Não conectado. Iniciando login..." "WARN"
+        try { Connect-AzAccount -ErrorAction Stop | Out-Null }
+        catch { Connect-AzAccount -UseDeviceAuthentication -ErrorAction Stop | Out-Null }
         $ctx = Get-AzContext
     }
     if ($SubscriptionId) {
@@ -385,20 +347,19 @@ try {
 catch { Log "Falha ao conectar: $($_.Exception.Message)" "ERROR"; exit 1 }
 
 # ============================================================================
-# DESCOBERTA DE STORAGE ACCOUNTS
+# DESCOBERTA
 # ============================================================================
 Log "Buscando Storage Accounts..." "SECTION"
 $saParams = @{}
 if ($ResourceGroupName) { $saParams['ResourceGroupName'] = $ResourceGroupName }
-
 try {
     $accounts = @(Get-AzStorageAccount @saParams -ErrorAction Stop)
     if ($StorageAccountName) { $accounts = @($accounts | Where-Object StorageAccountName -eq $StorageAccountName) }
     $accounts = @($accounts | Where-Object Kind -in 'StorageV2','BlobStorage','BlockBlobStorage')
     Log "Encontradas $($accounts.Count) Storage Account(s)" "INFO"
-    if ($accounts.Count -eq 0) { Log "Nenhuma conta encontrada. Verifique os filtros." "WARN"; exit 0 }
+    if ($accounts.Count -eq 0) { Log "Nenhuma conta encontrada." "WARN"; exit 0 }
 }
-catch { Log "Erro ao buscar Storage Accounts: $($_.Exception.Message)" "ERROR"; exit 1 }
+catch { Log "Erro: $($_.Exception.Message)" "ERROR"; exit 1 }
 
 # ============================================================================
 # PROCESSAMENTO PRINCIPAL
@@ -406,7 +367,7 @@ catch { Log "Erro ao buscar Storage Accounts: $($_.Exception.Message)" "ERROR"; 
 $totalAccounts = $accounts.Count
 $acctIdx = 0
 
-foreach ($account in $accounts) {
+:accountLoop foreach ($account in $accounts) {
     $acctIdx++
     $acctName = $account.StorageAccountName
     $acctRG   = $account.ResourceGroupName
@@ -414,20 +375,40 @@ foreach ($account in $accounts) {
     $acctBlobCount = 0
     $acctBytes = [long]0
     $acctEligibleBytes = [long]0
-    $thresholdQueue = [System.Collections.Generic.List[PSCustomObject]]::new()
+    $thresholdQueue = [System.Collections.Generic.List[hashtable]]::new()
+
+    # Resume: pular contas já processadas
+    if ($resumeState -and $resumeState.Phase -ne 'complete') {
+        if ($acctName -ne $resumeState.AccountName) {
+            VLog "Resume: pulando conta '$acctName' (já processada)" "DEBUG"
+            continue
+        }
+    }
 
     $stats.Accounts++
     Log "Storage Account [$acctIdx/$totalAccounts]: $acctName (RG: $acctRG)" "SECTION"
 
     try {
-        # Obter contexto de storage
         $storageCtx = $account.Context
+        $storageKey = $null
+
         if (-not $storageCtx) {
             $keys = Get-AzStorageAccountKey -ResourceGroupName $acctRG -Name $acctName -ErrorAction Stop
-            $storageCtx = New-AzStorageContext -StorageAccountName $acctName -StorageAccountKey $keys[0].Value
+            $storageKey = $keys[0].Value
+            $storageCtx = New-AzStorageContext -StorageAccountName $acctName -StorageAccountKey $storageKey
         }
 
-        # Listar containers (ARM para obter info de imutabilidade)
+        # Extrair key para parallel (se necessário)
+        if ($ThrottleLimit -gt 1 -and -not $storageKey) {
+            try {
+                $keys = Get-AzStorageAccountKey -ResourceGroupName $acctRG -Name $acctName -ErrorAction Stop
+                $storageKey = $keys[0].Value
+            } catch {
+                Log "Não foi possível obter key para paralelismo. Usando sequencial." "WARN"
+                $storageKey = $null
+            }
+        }
+
         $armContainers = @(Get-AzRmStorageContainer -ResourceGroupName $acctRG -StorageAccountName $acctName -ErrorAction Stop)
         if ($ContainerName) { $armContainers = @($armContainers | Where-Object Name -eq $ContainerName) }
 
@@ -439,16 +420,21 @@ foreach ($account in $accounts) {
             $ctrName = $armCtr.Name
             $stats.Containers++
 
-            # Registrar info do container para relatório
+            # Resume: pular containers já processados
+            if ($resumeState -and $resumeState.Phase -ne 'complete' -and $acctName -eq $resumeState.AccountName) {
+                if ($ctrName -ne $resumeState.ContainerName) {
+                    VLog "Resume: pulando container '$ctrName' (já processado)" "DEBUG"
+                    continue
+                }
+            }
+
+            # Info do container
             $cInfo = [PSCustomObject]@{
-                Name = $ctrName
-                HasPolicy = [bool]$armCtr.HasImmutabilityPolicy
+                Name = $ctrName; HasPolicy = [bool]$armCtr.HasImmutabilityPolicy
                 PolicyState = $null; RetentionDays = $null
                 VersionWorm = [bool]$armCtr.ImmutableStorageWithVersioning
                 HasLegalHold = [bool]$armCtr.HasLegalHold
-                LegalHoldTags = @()
             }
-
             if ($armCtr.HasImmutabilityPolicy) {
                 $stats.ContainersWithPolicy++
                 try {
@@ -456,283 +442,351 @@ foreach ($account in $accounts) {
                         -StorageAccountName $acctName -ContainerName $ctrName -ErrorAction Stop
                     $cInfo.PolicyState = $pol.State
                     $cInfo.RetentionDays = $pol.ImmutabilityPeriodSinceCreationInDays
-                } catch { VLog "  Erro ao ler política de '$ctrName': $($_.Exception.Message)" "WARN" }
+                } catch {}
             }
-
-            if ($armCtr.HasLegalHold) {
-                $cInfo.LegalHoldTags = @($armCtr.LegalHold.Tags | ForEach-Object { $_.Tag })
-            }
-
             $containerInfo.Add($cInfo)
-            Log "  Container [$ctrIdx/$totalCtrs]: $ctrName $(if($cInfo.HasPolicy){"| Política: $($cInfo.PolicyState) ($($cInfo.RetentionDays)d)"}else{'| Sem política'})" "INFO"
+            Log "  Container [$ctrIdx/$totalCtrs]: $ctrName $(if($cInfo.HasPolicy){"| $($cInfo.PolicyState) ($($cInfo.RetentionDays)d)"}else{'| Sem política'})" "INFO"
 
-            # ==================================================================
-            # PAGINAÇÃO — lotes de $PageSize, processamento imediato por página
-            # ==================================================================
+            # ==============================================================
+            # PAGINAÇÃO com pipeline streaming
+            # ==============================================================
             $ctrStart = Get-Date
             $ctrBlobs = 0; $ctrExpired = 0; $ctrRemoved = 0; $ctrBytes = [long]0
             $token = $null
             $pageNum = 0
 
+            # Resume: pular até a página do checkpoint
+            $resumePage = 0
+            if ($resumeState -and $acctName -eq $resumeState.AccountName -and $ctrName -eq $resumeState.ContainerName) {
+                $resumePage = $resumeState.PageNum
+                Log "  Resume: retomando da página $($resumePage + 1)" "WARN"
+            }
+
             do {
                 $pageNum++
+                if (Test-MaxErrorsReached) { break accountLoop }
 
                 $listP = @{
                     Container      = $ctrName
                     Context        = $storageCtx
                     MaxCount       = $PageSize
                     IncludeVersion = $true
-                    Verbose        = $EnableAzCmdletVerbose.IsPresent
+                    Verbose        = $false  # NUNCA verbose nos cmdlets Az (memória!)
                 }
+                if ($BlobPrefix) { $listP['Prefix'] = $BlobPrefix }
                 if ($null -ne $token) { $listP['ContinuationToken'] = $token }
 
-                Log "    Pág ${pageNum}: requisitando até $PageSize blobs..." "INFO"
-
-                $raw = $null
-                try {
-                    $raw = Invoke-WithRetry -Context "ListBlobs($ctrName/pág$pageNum)" -Attempts $MaxRetryAttempts -BaseDelaySeconds $RetryDelaySeconds -Operation {
-                        Get-AzStorageBlob @listP -ErrorAction Stop
-                    }
+                # Se em modo resume, páginas anteriores são apenas escaneadas para avançar o token
+                $isSkipPage = ($resumePage -gt 0 -and $pageNum -le $resumePage)
+                if ($isSkipPage) {
+                    Log "    Pág ${pageNum}: avançando token (resume)..." "DEBUG"
                 }
-                catch { AddError "ListBlobs($ctrName/pág$pageNum)" $_.Exception.Message; break }
+                else {
+                    Log "    Pág ${pageNum}: lendo até $PageSize blobs..." "INFO"
+                }
 
-                if ($null -eq $raw) { VLog "    Pág ${pageNum}: vazio (null)" "DEBUG"; break }
-
-                $blobs = @($raw)
-                $blobCount = $blobs.Count
-                if ($blobCount -eq 0) { VLog "    Pág ${pageNum}: vazio (0)" "DEBUG"; break }
-
-                $stats.Pages++
-
-                # Capturar ContinuationToken ANTES de processar
-                $token = $null
-                try { if ($null -ne $blobs[-1].ContinuationToken) { $token = $blobs[-1].ContinuationToken } } catch { $token = $null }
-
-                $hasMore = if ($null -ne $token) { "→ mais páginas" } else { "→ última página" }
-                Log "    Pág ${pageNum}: $blobCount blobs recebidos $hasMore" "SUCCESS"
-
-                # ==============================================================
-                # FASE 1: ANALISAR blobs desta página
-                # ==============================================================
-                $pageEligible = [System.Collections.Generic.List[PSCustomObject]]::new()
-                $pageDryRun = [System.Collections.Generic.List[PSCustomObject]]::new()
-                $pageExpired = 0; $pageActive = 0; $pageNoPolicy = 0; $pageLH = 0
+                # ==========================================================
+                # PIPELINE STREAMING — Um blob por vez, sem array
+                # ==========================================================
+                $pageEligible = [System.Collections.Generic.List[hashtable]]::new()
+                $pageBlobCount = 0
+                $pageExpired = 0; $pageActive = 0; $pageLH = 0; $pageNoPolicy = 0
                 $pageBytesEligible = [long]0
                 $analyzeStart = Get-Date
-                $blobIdx = 0
+                $token = $null  # Reset antes do pipeline
+                $pipelineError = $null
 
-                foreach ($blob in $blobs) {
-                    $blobIdx++
-                    $ctrBlobs++; $stats.Blobs++
-                    $stats.BytesScanned += $blob.Length
-                    $acctBlobCount++; $acctBytes += $blob.Length; $ctrBytes += $blob.Length
+                try {
+                    Invoke-WithRetry -Context "ListBlobs($ctrName/pág$pageNum)" -Attempts $MaxRetryAttempts -BaseDelaySeconds $RetryDelaySeconds -Operation {
+                        Get-AzStorageBlob @listP -ErrorAction Stop
+                    } | ForEach-Object {
+                        # CRITICAL: $_ é o SDK blob object. Extrair TUDO que precisamos e soltar.
+                        $pageBlobCount++
 
-                    # Inline progress — uma linha atualizando
-                    $progressInterval = if ($PageSize -le 200) { 10 } else { 100 }
-                    if ($blobIdx % $progressInterval -eq 0 -or $blobIdx -eq $blobCount) {
-                        $tp = Throughput $blobIdx $analyzeStart
-                        InlineProgress "    [ANALISANDO] Pág ${pageNum}: $blobIdx/$blobCount | Expirados: $pageExpired | Elegíveis: $($pageEligible.Count) | Ativos: $pageActive | $tp"
-                    }
+                        # Capturar token de CADA blob (o último ganha)
+                        try { $script:token = $_.ContinuationToken } catch { $script:token = $null }
 
-                    # --- Extrair info de imutabilidade ---
-                    $versionId = $null; try { $versionId = $blob.VersionId } catch {}
-                    $isCurrent = $null; try { $isCurrent = $blob.IsCurrentVersion } catch {}
-                    $immPol = $null; try { $immPol = $blob.BlobProperties.ImmutabilityPolicy } catch {}
-                    $hasLH = $false; try { $hasLH = [bool]$blob.BlobProperties.HasLegalHold } catch {}
-
-                    $r = [PSCustomObject]@{
-                        Account    = $acctName;   Container = $ctrName
-                        Blob       = $blob.Name;  VersionId = $versionId; IsCurrent = $isCurrent
-                        Size       = $blob.Length; SizeFmt   = FmtSize $blob.Length
-                        Tier       = $blob.AccessTier
-                        ExpiresOn  = $null; Mode = $null; DaysExp = 0
-                        LegalHold  = $hasLH
-                        Status     = "NoPolicy"; Eligible = $false; Action = "None"
-                    }
-
-                    $days = 0
-
-                    if ($null -ne $immPol -and $null -ne $immPol.ExpiresOn) {
-                        $r.ExpiresOn = $immPol.ExpiresOn
-                        $r.Mode = $immPol.PolicyMode
-                        $expDate = [DateTimeOffset]$immPol.ExpiresOn
-
-                        if ($expDate -lt $now) {
-                            $days = [math]::Floor(($now - $expDate).TotalDays)
-                            $r.DaysExp = $days
-                            $r.Status = "Expired"
-                            $ctrExpired++; $stats.Expired++
-                            $pageExpired++
-
-                            if ($MaxDaysExpired -gt 0 -and $days -lt $MaxDaysExpired) {
-                                $r.Action = "SkippedMinDays"
-                            }
-                            elseif ($hasLH) {
-                                $r.Action = "SkippedLegalHold"
-                                $stats.LegalHold++; $pageLH++
-                            }
-                            else {
-                                $r.Eligible = $true
-                                $stats.Eligible++
-                                $stats.BytesEligible += $blob.Length
-                                $acctEligibleBytes += $blob.Length
-                                $pageBytesEligible += $blob.Length
-                            }
-                        }
-                        else {
-                            $r.Status = "Active"
-                            $stats.Active++; $pageActive++
-                        }
-                    }
-                    elseif ($hasLH) {
-                        $r.Status = "LegalHold"; $r.LegalHold = $true
-                        $stats.LegalHold++; $pageLH++
-                    }
-                    else { $pageNoPolicy++ }
-
-                    # Coletar elegíveis desta página
-                    if ($r.Eligible) {
-                        if ($MinAccountSizeTB -gt 0 -and ($modeRemove -or $modePolicyOnly)) {
-                            $r.Action = "PendingThreshold"
-                            $thresholdQueue.Add($r)
-                        }
-                        elseif ($modeRemove -or $modePolicyOnly) {
-                            $pageEligible.Add($r)
-                        }
-                        else {
-                            $r.Action = "DryRun"
-                            $pageDryRun.Add($r)
-                        }
-                    }
-
-                    if ($r.Status -ne "NoPolicy") {
-                        if ($allResults.Count -lt $MaxDetailedResults) {
-                            $allResults.Add($r)
-                        }
-                        else {
-                            $stats.DetailedRowsDropped++
-                        }
-                    }
-                }
-
-                # Limpar linha de progresso inline
-                Write-Host "`r$(' ' * 130)`r" -NoNewline
-                Write-Host ""
-
-                # Resumo da análise da página
-                $analyzeDur = ((Get-Date) - $analyzeStart).TotalSeconds
-                Log "    Pág ${pageNum} analisada em $([math]::Round($analyzeDur,1))s: $blobCount blobs | Expirados: $pageExpired | Elegíveis: $($pageEligible.Count) ($(FmtSize $pageBytesEligible)) | Ativos: $pageActive | Sem política: $pageNoPolicy" "INFO"
-
-                # DryRun: listar os elegíveis desta página
-                if ($modeDryRun) {
-                    if ($pageDryRun.Count -gt 0) {
-                        Log "    DryRun — $($pageDryRun.Count) blob(s) seriam removidos:" "WARN"
-                        foreach ($di in $pageDryRun) {
-                            $vL = if ($di.VersionId) { " [v:$($di.VersionId.Substring(0,[math]::Min(16,$di.VersionId.Length)))]" } else { "" }
-                            Log "      '$($di.Blob)'$vL — $($di.DaysExp)d expirado ($($di.SizeFmt)) [$($di.Mode)]" "INFO"
-                            $di.Action = "DryRunLogged"
-                        }
-                    }
-                }
-
-                # ==============================================================
-                # FASE 2: EXECUTAR AÇÕES desta página
-                # ==============================================================
-                if ($pageEligible.Count -gt 0) {
-                    Write-Host ""
-                    Log "    ► INICIANDO REMOÇÃO: $($pageEligible.Count) blob(s) | $(FmtSize $pageBytesEligible) | Pág $pageNum" "WARN"
-                    Write-Host ""
-                    $actionIdx = 0
-                    $actionStart = Get-Date
-
-                    foreach ($item in $pageEligible) {
-                        $actionIdx++
-
-                        $vLabel = ""
-                        if ($item.VersionId) {
-                            $vLabel = " [v:$($item.VersionId.Substring(0,[math]::Min(16,$item.VersionId.Length)))]"
+                        if ($isSkipPage) {
+                            $script:ctrBlobs++
+                            return  # Next in pipeline
                         }
 
-                        $polP = @{ Container = $item.Container; Blob = $item.Blob; Context = $storageCtx }
+                        # Extrair campos leves do blob pesado
+                        $bName = $_.Name
+                        $bVersionId = $null; try { $bVersionId = $_.VersionId } catch {}
+                        $bIsCurrent = $null; try { $bIsCurrent = $_.IsCurrentVersion } catch {}
+                        $bLength = $_.Length
+                        $bTier = $_.AccessTier
+                        $bExpOn = $null; $bMode = $null; $bHasLH = $false
+                        try { $bExpOn = $_.BlobProperties.ImmutabilityPolicy.ExpiresOn } catch {}
+                        try { $bMode = $_.BlobProperties.ImmutabilityPolicy.PolicyMode } catch {}
+                        try { $bHasLH = [bool]$_.BlobProperties.HasLegalHold } catch {}
 
-                        if ($modePolicyOnly) {
-                            $target = "$($item.Container)/$($item.Blob)"
-                            if (-not $PSCmdlet.ShouldProcess($target, "Remover política de imutabilidade")) {
-                                $item.Action = "SkippedWhatIf"
-                                continue
-                            }
-                            try {
-                                Invoke-WithRetry -Context "RemovePolicy($($item.Blob))" -Attempts $MaxRetryAttempts -BaseDelaySeconds $RetryDelaySeconds -Operation {
-                                    Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop -Verbose:$EnableAzCmdletVerbose.IsPresent
-                                } | Out-Null
-                                $item.Action = "PolicyRemoved"
-                                $stats.PoliciesRemoved++
-                                if ($verbose -or $actionIdx -le 10 -or $actionIdx % 100 -eq 0 -or $actionIdx -eq $pageEligible.Count) {
-                                    Log "    [$actionIdx/$($pageEligible.Count)] POLICY REMOVED: '$($item.Blob)'$vLabel" "SUCCESS"
+                        # >>> $_ (SDK object) NÃO É MAIS NECESSÁRIO APÓS ESTE PONTO <<<
+
+                        $script:ctrBlobs++
+                        $script:stats.Blobs++
+                        $script:stats.BytesScanned += $bLength
+                        $script:acctBlobCount++
+                        $script:acctBytes += $bLength
+                        $script:ctrBytes += $bLength
+
+                        # Inline progress
+                        $progressInterval = if ($PageSize -le 200) { 10 } else { 100 }
+                        if ($pageBlobCount % $progressInterval -eq 0) {
+                            $tp = Throughput $pageBlobCount $analyzeStart
+                            InlineProgress "    [ANALISANDO] Pág ${pageNum}: $pageBlobCount | Exp: $pageExpired | Elig: $($pageEligible.Count) | $tp"
+                        }
+
+                        # Análise de imutabilidade
+                        $status = "NoPolicy"; $eligible = $false; $action = "None"; $days = 0
+
+                        if ($null -ne $bExpOn) {
+                            $expDate = [DateTimeOffset]$bExpOn
+                            if ($expDate -lt $now) {
+                                $days = [math]::Floor(($now - $expDate).TotalDays)
+                                $status = "Expired"
+                                $script:ctrExpired++
+                                $script:stats.Expired++
+                                $pageExpired++
+
+                                if ($MaxDaysExpired -gt 0 -and $days -lt $MaxDaysExpired) {
+                                    $action = "SkippedMinDays"
                                 }
-                            }
-                            catch {
-                                $e = $_.Exception.Message
-                                if (Test-BlobNotFoundError -Message $e) {
-                                    $item.Action = "AlreadyDeleted"
-                                    VLog "    [$actionIdx/$($pageEligible.Count)] Já removido: '$($item.Blob)'$vLabel" "DEBUG"
+                                elseif ($bHasLH) {
+                                    $action = "SkippedLegalHold"
+                                    $script:stats.LegalHold++; $pageLH++
                                 }
                                 else {
-                                    $item.Action = "Error: $e"
-                                    AddError "RemovePolicy($($item.Blob))" $e
+                                    $eligible = $true
+                                    $script:stats.Eligible++
+                                    $script:stats.BytesEligible += $bLength
+                                    $script:acctEligibleBytes += $bLength
+                                    $pageBytesEligible += $bLength
                                 }
+                            }
+                            else {
+                                $status = "Active"
+                                $script:stats.Active++; $pageActive++
                             }
                         }
-                        elseif ($modeRemove) {
-                            $target = "$($item.Container)/$($item.Blob)"
-                            if (-not $PSCmdlet.ShouldProcess($target, "Remover política de imutabilidade expirada e deletar blob")) {
-                                $item.Action = "SkippedWhatIf"
-                                continue
+                        elseif ($bHasLH) {
+                            $status = "LegalHold"
+                            $script:stats.LegalHold++; $pageLH++
+                        }
+                        else { $pageNoPolicy++ }
+
+                        # Coletar elegíveis como hashtable LEVE
+                        if ($eligible) {
+                            $item = @{
+                                Container = $ctrName; Blob = $bName; VersionId = $bVersionId
+                                Size = $bLength; Mode = $bMode
                             }
+
+                            if ($MinAccountSizeTB -gt 0 -and ($modeRemove -or $modePolicyOnly)) {
+                                $action = "PendingThreshold"
+                                $thresholdQueue.Add($item)
+                            }
+                            elseif ($modeRemove -or $modePolicyOnly) {
+                                $pageEligible.Add($item)
+                            }
+                            else {
+                                $action = "DryRun"
+                            }
+                        }
+
+                        # Salvar resultado em disco (se tem política)
+                        if ($status -ne "NoPolicy") {
+                            Write-ResultToDisk @{
+                                Account = $acctName; Container = $ctrName; Blob = $bName
+                                VersionId = $bVersionId; IsCurrent = $bIsCurrent
+                                Size = $bLength; Tier = $bTier; ExpiresOn = $bExpOn
+                                Mode = $bMode; HasLegalHold = $bHasLH
+                                Status = $status; DaysExp = $days; Eligible = $eligible; Action = $action
+                            }
+                        }
+
+                        # DryRun log
+                        if ($modeDryRun -and $eligible) {
+                            $vL = if ($bVersionId) { " [v:$($bVersionId.Substring(0,[math]::Min(16,$bVersionId.Length)))]" } else { "" }
+                            Log "    DRYRUN: '$bName'$vL — ${days}d expirado ($(FmtSize $bLength)) [$bMode]" "INFO"
+                        }
+                    }
+                }
+                catch {
+                    $pipelineError = $_.Exception.Message
+                    AddError "ListBlobs($ctrName/pág$pageNum)" $pipelineError
+                }
+
+                # Limpar progress inline
+                Write-Host "`r$(' ' * 140)`r" -NoNewline
+                if ($pageBlobCount -gt 0 -and -not $isSkipPage) { Write-Host "" }
+
+                $stats.Pages++
+                $hasMore = if ($null -ne $token) { "→ mais" } else { "→ fim" }
+
+                if ($isSkipPage) {
+                    VLog "    Pág ${pageNum}: $pageBlobCount blobs (skip) $hasMore" "DEBUG"
+                }
+                else {
+                    $analyzeDur = ((Get-Date) - $analyzeStart).TotalSeconds
+                    Log "    Pág ${pageNum}: $pageBlobCount blobs em $([math]::Round($analyzeDur,1))s | Exp: $pageExpired | Elig: $($pageEligible.Count) ($(FmtSize $pageBytesEligible)) | Ativos: $pageActive $hasMore" "INFO"
+                }
+
+                if ($null -ne $pipelineError) {
+                    if ($null -eq $token) { break }
+                }
+
+                # ==========================================================
+                # FASE 2: DELEÇÃO (paralela ou sequencial) desta página
+                # ==========================================================
+                if ($pageEligible.Count -gt 0 -and -not $isSkipPage) {
+                    Write-Host ""
+                    Log "    ► REMOVENDO: $($pageEligible.Count) blob(s) | $(FmtSize $pageBytesEligible) | Pág $pageNum | Threads: $ThrottleLimit" "WARN"
+
+                    $actionStart = Get-Date
+                    $pageRemoved = 0
+                    $pageErrors = 0
+
+                    if ($ThrottleLimit -gt 1 -and $null -ne $storageKey) {
+                        # =============================================
+                        # DELEÇÃO PARALELA
+                        # =============================================
+                        $parallelResults = $pageEligible | ForEach-Object -Parallel {
+                            $item = $_
+                            $saName = $using:acctName
+                            $saKey = $using:storageKey
+                            $doRemove = $using:modeRemove
+                            $doPolicyOnly = $using:modePolicyOnly
+
+                            $result = @{ Blob = $item.Blob; Size = $item.Size; Action = "Error"; ErrorMsg = $null }
+
                             try {
-                                # Passo 1: remover política de imutabilidade expirada
-                                if ($item.Mode) {
-                                    try {
-                                        Invoke-WithRetry -Context "RemovePolicy($($item.Blob))" -Attempts $MaxRetryAttempts -BaseDelaySeconds $RetryDelaySeconds -Operation {
-                                            Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop -Verbose:$EnableAzCmdletVerbose.IsPresent
-                                        } | Out-Null
-                                        $stats.PoliciesRemoved++
-                                    }
-                                    catch {
-                                        $e = $_.Exception.Message
-                                        if (-not ($e -match 'BlobNotFound|404|does not exist')) {
-                                            Log "    [$actionIdx/$($pageEligible.Count)] Aviso política: $e" "WARN"
+                                $ctx = New-AzStorageContext -StorageAccountName $saName -StorageAccountKey $saKey
+                                $polP = @{ Container = $item.Container; Blob = $item.Blob; Context = $ctx }
+
+                                if ($doPolicyOnly) {
+                                    Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop
+                                    $result.Action = "PolicyRemoved"
+                                }
+                                elseif ($doRemove) {
+                                    if ($item.Mode) {
+                                        try { Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop }
+                                        catch {
+                                            if ($_.Exception.Message -notmatch 'BlobNotFound|404|does not exist') { }
                                         }
                                     }
-                                }
-
-                                # Passo 2: deletar o blob
-                                $delP = @{
-                                    Container = $item.Container; Blob = $item.Blob
-                                    Context = $storageCtx; Force = $true
-                                }
-                                if ($item.VersionId) { $delP['VersionId'] = $item.VersionId }
-
-                                Invoke-WithRetry -Context "RemoveBlob($($item.Blob))" -Attempts $MaxRetryAttempts -BaseDelaySeconds $RetryDelaySeconds -Operation {
-                                    Remove-AzStorageBlob @delP -ErrorAction Stop -Verbose:$EnableAzCmdletVerbose.IsPresent
-                                } | Out-Null
-
-                                $item.Action = "Removed"
-                                $stats.Removed++
-                                $stats.BytesRemoved += $item.Size
-                                $ctrRemoved++
-                                if ($verbose -or $actionIdx -le 10 -or $actionIdx % 100 -eq 0 -or $actionIdx -eq $pageEligible.Count) {
-                                    Log "    [$actionIdx/$($pageEligible.Count)] REMOVED: '$($item.Blob)'$vLabel ($($item.SizeFmt))" "SUCCESS"
+                                    $delP = @{ Container = $item.Container; Blob = $item.Blob; Context = $ctx; Force = $true }
+                                    if ($item.VersionId) { $delP['VersionId'] = $item.VersionId }
+                                    Remove-AzStorageBlob @delP -ErrorAction Stop
+                                    $result.Action = "Removed"
                                 }
                             }
                             catch {
                                 $e = $_.Exception.Message
                                 if ($e -match 'BlobNotFound|404|does not exist') {
-                                    $item.Action = "AlreadyDeleted"
-                                    VLog "    [$actionIdx/$($pageEligible.Count)] Já removido: '$($item.Blob)'$vLabel" "DEBUG"
-                                } else {
-                                    $item.Action = "Error: $e"
-                                    AddError "RemoveBlob($($item.Blob))" $e
+                                    $result.Action = "AlreadyDeleted"
+                                }
+                                else {
+                                    $result.Action = "Error"
+                                    $result.ErrorMsg = $e
+                                }
+                            }
+                            $result
+                        } -ThrottleLimit $ThrottleLimit
+
+                        foreach ($pr in $parallelResults) {
+                            switch ($pr.Action) {
+                                "Removed" {
+                                    $pageRemoved++; $stats.Removed++; $stats.PoliciesRemoved++
+                                    $stats.BytesRemoved += $pr.Size
+                                    ResetConsecutiveErrors
+                                }
+                                "PolicyRemoved" {
+                                    $stats.PoliciesRemoved++
+                                    ResetConsecutiveErrors
+                                }
+                                "AlreadyDeleted" {
+                                    ResetConsecutiveErrors
+                                }
+                                "Error" {
+                                    $pageErrors++
+                                    AddError "ParallelRemove($($pr.Blob))" $pr.ErrorMsg
+                                }
+                            }
+                        }
+                        $parallelResults = $null
+                    }
+                    else {
+                        # =============================================
+                        # DELEÇÃO SEQUENCIAL
+                        # =============================================
+                        $actionIdx = 0
+                        foreach ($item in $pageEligible) {
+                            $actionIdx++
+                            if (Test-MaxErrorsReached) { break }
+
+                            $vLabel = if ($item.VersionId) { " [v:$($item.VersionId.Substring(0,[math]::Min(16,$item.VersionId.Length)))]" } else { "" }
+                            $target = "$($item.Container)/$($item.Blob)"
+
+                            if (-not $PSCmdlet.ShouldProcess($target, "Remover blob com imutabilidade expirada")) {
+                                continue
+                            }
+
+                            $polP = @{ Container = $item.Container; Blob = $item.Blob; Context = $storageCtx }
+
+                            if ($modePolicyOnly) {
+                                try {
+                                    Invoke-WithRetry -Context "RemovePolicy" -Attempts $MaxRetryAttempts -BaseDelaySeconds $RetryDelaySeconds -Operation {
+                                        Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop
+                                    } | Out-Null
+                                    $stats.PoliciesRemoved++
+                                    ResetConsecutiveErrors
+                                    if ($verbose -or $actionIdx -le 5 -or $actionIdx % 100 -eq 0 -or $actionIdx -eq $pageEligible.Count) {
+                                        Log "    [$actionIdx/$($pageEligible.Count)] POLICY: '$($item.Blob)'$vLabel" "SUCCESS"
+                                    }
+                                }
+                                catch {
+                                    $e = $_.Exception.Message
+                                    if (Test-BlobNotFoundError -Message $e) { ResetConsecutiveErrors }
+                                    else { AddError "RemovePolicy($($item.Blob))" $e }
+                                }
+                            }
+                            elseif ($modeRemove) {
+                                try {
+                                    if ($item.Mode) {
+                                        try {
+                                            Invoke-WithRetry -Context "Policy" -Attempts $MaxRetryAttempts -BaseDelaySeconds $RetryDelaySeconds -Operation {
+                                                Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop
+                                            } | Out-Null
+                                            $stats.PoliciesRemoved++
+                                        }
+                                        catch {
+                                            if ($_.Exception.Message -notmatch 'BlobNotFound|404|does not exist') {
+                                                Log "    Aviso policy: $($_.Exception.Message)" "WARN"
+                                            }
+                                        }
+                                    }
+
+                                    $delP = @{ Container = $item.Container; Blob = $item.Blob; Context = $storageCtx; Force = $true }
+                                    if ($item.VersionId) { $delP['VersionId'] = $item.VersionId }
+
+                                    Invoke-WithRetry -Context "Delete" -Attempts $MaxRetryAttempts -BaseDelaySeconds $RetryDelaySeconds -Operation {
+                                        Remove-AzStorageBlob @delP -ErrorAction Stop
+                                    } | Out-Null
+
+                                    $pageRemoved++; $stats.Removed++; $stats.BytesRemoved += $item.Size
+                                    $ctrRemoved++
+                                    ResetConsecutiveErrors
+
+                                    if ($verbose -or $actionIdx -le 5 -or $actionIdx % 100 -eq 0 -or $actionIdx -eq $pageEligible.Count) {
+                                        Log "    [$actionIdx/$($pageEligible.Count)] REMOVED: '$($item.Blob)'$vLabel ($(FmtSize $item.Size))" "SUCCESS"
+                                    }
+                                }
+                                catch {
+                                    $e = $_.Exception.Message
+                                    if ($e -match 'BlobNotFound|404|does not exist') { ResetConsecutiveErrors }
+                                    else { AddError "RemoveBlob($($item.Blob))" $e }
                                 }
                             }
                         }
@@ -740,245 +794,11 @@ foreach ($account in $accounts) {
 
                     $actionDur = ((Get-Date) - $actionStart).TotalSeconds
                     Write-Host ""
-                    Log "    ✓ Pág ${pageNum} remoção concluída: $actionIdx ações em $([math]::Round($actionDur,1))s" "SUCCESS"
-                }
-                else {
-                    if (-not $modeDryRun) {
-                        VLog "    Pág ${pageNum}: nenhum blob elegível para remoção" "INFO"
-                    }
+                    Log "    ✓ Pág ${pageNum}: $pageRemoved removidos, $pageErrors erros em $([math]::Round($actionDur,1))s" "SUCCESS"
                 }
 
-                # Liberar memória da página
-                $blobs = $null; $raw = $null; $pageEligible = $null
-                [System.GC]::Collect()
-                [System.GC]::WaitForPendingFinalizers()
-
-                # Ajustar page size dinamicamente se memória estiver alta
-                $memGuard = Invoke-AdaptiveMemoryGuard -CurrentPageSize $PageSize -MinPageSize $MinAdaptivePageSize -HighWatermarkPercent $MemoryUsageHighWatermarkPercent
-                if ($memGuard.Changed) {
-                    Log "    Memory guard: uso $($memGuard.UsagePercent)% — reduzindo PageSize de $PageSize para $($memGuard.AdjustedPageSize)" "WARN"
-                    $PageSize = $memGuard.AdjustedPageSize
-                }
-
-            } while ($null -ne $token)
-            # ============== FIM DA PAGINAÇÃO DO CONTAINER ==============
-
-            $ctrDur = ((Get-Date) - $ctrStart).ToString('hh\:mm\:ss')
-            $ctrTp = Throughput $ctrBlobs $ctrStart
-            Write-Host ""
-            Log "  Resumo '$ctrName': $ctrBlobs blobs ($pageNum pág) | $(FmtSize $ctrBytes) | Expired: $ctrExpired | Removidos: $ctrRemoved | $ctrTp | $ctrDur" "INFO"
-            Write-Host ""
-        }
-
-        # Processar fila de threshold (após completar toda a conta)
-        if ($MinAccountSizeTB -gt 0 -and ($modeRemove -or $modePolicyOnly) -and $thresholdQueue.Count -gt 0) {
-            $thresholdBytes = [long]$MinAccountSizeTB * 1TB
-            if ($acctBytes -ge $thresholdBytes) {
-                Log "Conta '$acctName' qualificada: $(FmtSize $acctBytes) >= ${MinAccountSizeTB}TB. Processando $($thresholdQueue.Count) blob(s)..." "WARN"
-                $tIdx = 0
-                foreach ($qItem in $thresholdQueue) {
-                    $tIdx++
-                    $polP = @{ Container = $qItem.Container; Blob = $qItem.Blob; Context = $storageCtx }
-                    try {
-                        $target = "$($qItem.Container)/$($qItem.Blob)"
-                        $op = if ($modeRemove) { "Remover política expirada e deletar blob (threshold)" } else { "Remover política de imutabilidade (threshold)" }
-                        if (-not $PSCmdlet.ShouldProcess($target, $op)) {
-                            $qItem.Action = "SkippedWhatIf"
-                            continue
-                        }
-
-                        if ($qItem.Mode) {
-                            try {
-                                Invoke-WithRetry -Context "ThresholdPolicy($($qItem.Blob))" -Attempts $MaxRetryAttempts -BaseDelaySeconds $RetryDelaySeconds -Operation {
-                                    Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop -Verbose:$EnableAzCmdletVerbose.IsPresent
-                                } | Out-Null
-                                $stats.PoliciesRemoved++
-                            }
-                            catch { <# ignora BlobNotFound para versões não-current #> }
-                        }
-                        if ($modeRemove) {
-                            $delP = @{ Container = $qItem.Container; Blob = $qItem.Blob; Context = $storageCtx; Force = $true }
-                            if ($qItem.VersionId) { $delP['VersionId'] = $qItem.VersionId }
-                            Invoke-WithRetry -Context "ThresholdRemove($($qItem.Blob))" -Attempts $MaxRetryAttempts -BaseDelaySeconds $RetryDelaySeconds -Operation {
-                                Remove-AzStorageBlob @delP -ErrorAction Stop -Verbose:$EnableAzCmdletVerbose.IsPresent
-                            } | Out-Null
-                            $qItem.Action = "Removed"; $stats.Removed++; $stats.BytesRemoved += $qItem.Size
-                            if ($verbose -or $tIdx -le 10 -or $tIdx % 100 -eq 0 -or $tIdx -eq $thresholdQueue.Count) {
-                                Log "    [$tIdx/$($thresholdQueue.Count)] REMOVED: '$($qItem.Blob)' ($($qItem.SizeFmt))" "SUCCESS"
-                            }
-                        } else {
-                            $qItem.Action = "PolicyRemoved"; $stats.PoliciesRemoved++
-                            if ($verbose -or $tIdx -le 10 -or $tIdx % 100 -eq 0 -or $tIdx -eq $thresholdQueue.Count) {
-                                Log "    [$tIdx/$($thresholdQueue.Count)] POLICY REMOVED: '$($qItem.Blob)'" "SUCCESS"
-                            }
-                        }
-                    }
-                    catch {
-                        $e = $_.Exception.Message
-                        if ($e -match 'BlobNotFound|404') { $qItem.Action = "AlreadyDeleted" }
-                        else { $qItem.Action = "Error: $e"; AddError "Threshold($($qItem.Blob))" $e }
-                    }
-                }
-            }
-            else {
-                Log "Conta '$acctName' abaixo do limiar: $(FmtSize $acctBytes) < ${MinAccountSizeTB}TB. Sem ação." "INFO"
-                foreach ($qItem in $thresholdQueue) { $qItem.Action = "SkippedThreshold" }
-            }
-        }
-
-        $acctDur = ((Get-Date) - $acctStart).ToString('hh\:mm\:ss')
-        Log "Resumo '$acctName': $acctBlobCount blobs | $(FmtSize $acctBytes) | Elegível: $(FmtSize $acctEligibleBytes) | $acctDur" "SUCCESS"
-    }
-    catch {
-        Log "EXCEÇÃO na conta '$acctName': $($_.Exception.Message)" "ERROR"
-        Log "StackTrace: $($_.ScriptStackTrace)" "ERROR"
-        AddError "Account($acctName)" $_.Exception.Message
-    }
-}
-
-if ($verbose) { Write-Progress -Activity "Concluído" -Completed }
-
-# ============================================================================
-# RELATÓRIO HTML
-# ============================================================================
-Log "Gerando relatórios..." "SECTION"
-if (-not (Test-Path $OutputPath)) { New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null }
-$ts = Get-Date -Format "yyyyMMdd_HHmmss"
-
-$duration = (Get-Date) - $startTime
-$modeBadge = if ($modeDryRun) { '<span style="background:#fff3cd;color:#856404;padding:4px 12px;border-radius:12px;font-weight:600">SIMULAÇÃO</span>' }
-             else { '<span style="background:#f8d7da;color:#721c24;padding:4px 12px;border-radius:12px;font-weight:600">' + $modeLabel + '</span>' }
-
-$ctrRows = ($containerInfo | ForEach-Object {
-    $lh = if ($_.HasLegalHold) { "<span style='color:#f39c12;font-weight:600'>Sim</span>" } else { "Não" }
-    $ps = if ($_.PolicyState) { $_.PolicyState } else { "-" }
-    $rd = if ($_.RetentionDays) { $_.RetentionDays } else { "-" }
-    "<tr><td>$($_.Name)</td><td>$(if($_.HasPolicy){'Sim'}else{'Não'})</td><td>$ps</td><td>$rd</td><td>$(if($_.VersionWorm){'Sim'}else{'Não'})</td><td>$lh</td></tr>"
-}) -join "`n"
-
-$expBlobs = $allResults | Where-Object Status -eq "Expired"
-$expRows = ($expBlobs | ForEach-Object {
-    $short = if ($_.Blob.Length -gt 60) { $_.Blob.Substring(0,57)+'...' } else { $_.Blob }
-    $vShort = if ($_.VersionId) { $_.VersionId.Substring(0,[math]::Min(16,$_.VersionId.Length))+'...' } else { '-' }
-    $expD = if ($_.ExpiresOn) { ([DateTimeOffset]$_.ExpiresOn).ToString('dd/MM/yyyy HH:mm') } else { '-' }
-    $ac = switch -Wildcard ($_.Action) { "DryRun*"{"color:#3498db"} "*Removed*"{"color:#e74c3c"} "Skipped*"{"color:#95a5a6"} "Error*"{"color:#e74c3c;font-weight:600"} default{""} }
-    "<tr><td>$($_.Account)</td><td>$($_.Container)</td><td title='$($_.Blob)'>$short</td><td style='font-family:monospace;font-size:11px' title='$($_.VersionId)'>$vShort</td><td>$($_.SizeFmt)</td><td>$expD</td><td style='color:#e74c3c;font-weight:600'>$($_.DaysExp)</td><td>$($_.Mode)</td><td style='$ac'>$($_.Action)</td></tr>"
-}) -join "`n"
-
-$expSection = ""
-if ($expBlobs.Count -gt 0) {
-    $expSection = @"
-<div class="section"><h2>Blobs com Imutabilidade Vencida ($($expBlobs.Count))</h2>
-<div class="scroll"><table>
-<thead><tr><th>Account</th><th>Container</th><th>Blob</th><th>Version</th><th>Tamanho</th><th>Expirou</th><th>Dias</th><th>Modo</th><th>Ação</th></tr></thead>
-<tbody>$expRows</tbody></table></div></div>
-"@
-}
-
-$truncSection = ""
-if ($stats.DetailedRowsDropped -gt 0) {
-    $truncSection = "<div class='section'><h2>Observação de Memória</h2><div style='padding:16px;color:#856404;background:#fff3cd'>Relatório detalhado foi limitado para controle de memória. Linhas não persistidas: $($stats.DetailedRowsDropped.ToString('N0')).</div></div>"
-}
-
-$errSection = ""
-if ($stats.ErrorList.Count -gt 0) {
-    $errItems = ($stats.ErrorList | ForEach-Object { "<li>$([System.Net.WebUtility]::HtmlEncode($_))</li>" }) -join "`n"
-    $errSection = "<div class='section'><h2>Erros ($($stats.Errors))</h2><div style='padding:16px'><ul style='color:#721c24'>$errItems</ul></div></div>"
-}
-
-$errCard = if ($stats.Errors -gt 0) { "warning" } else { "" }
-
-$html = @"
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head><meta charset="UTF-8"><title>Immutability Audit v$version</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Segoe UI',sans-serif;background:#f5f5f5;color:#333;padding:20px}
-.hdr{background:linear-gradient(135deg,#0078d4,#005a9e);color:#fff;padding:30px;border-radius:8px;margin-bottom:20px}
-.hdr h1{font-size:22px;margin-bottom:8px}.hdr p{opacity:.9;font-size:13px}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:20px}
-.card{background:#fff;padding:18px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,.1)}
-.card .v{font-size:26px;font-weight:700;color:#0078d4}.card .l{font-size:12px;color:#666;margin-top:4px}
-.card.warning .v{color:#e74c3c}.card.success .v{color:#27ae60}
-.section{background:#fff;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,.1);margin-bottom:20px;overflow:hidden}
-.section h2{padding:14px 18px;background:#f8f9fa;border-bottom:1px solid #dee2e6;font-size:15px}
-table{width:100%;border-collapse:collapse;font-size:12px}
-th{background:#e9ecef;padding:8px 10px;text-align:left;font-weight:600;position:sticky;top:0}
-td{padding:7px 10px;border-bottom:1px solid #f0f0f0}tr:hover{background:#f8f9fa}
-.scroll{max-height:600px;overflow-y:auto}
-.ft{text-align:center;padding:16px;color:#999;font-size:11px}
-</style></head>
-<body>
-<div class="hdr">
-<h1>Relatório — Immutability Cleanup v$version</h1>
-<p>$(Get-Date -Format 'dd/MM/yyyy HH:mm:ss') | Duração: $($duration.ToString('hh\:mm\:ss')) | Páginas: $($stats.Pages) | PageSize: $PageSize</p>
-$modeBadge
-</div>
-<div class="grid">
-<div class="card"><div class="v">$($stats.Accounts)</div><div class="l">Storage Accounts</div></div>
-<div class="card"><div class="v">$($stats.Containers)</div><div class="l">Containers</div></div>
-<div class="card"><div class="v">$($stats.Blobs.ToString('N0'))</div><div class="l">Blobs Analisados</div></div>
-<div class="card warning"><div class="v">$($stats.Expired.ToString('N0'))</div><div class="l">Imutab. Vencida</div></div>
-<div class="card success"><div class="v">$($stats.Active.ToString('N0'))</div><div class="l">Imutab. Ativa</div></div>
-<div class="card"><div class="v">$($stats.LegalHold)</div><div class="l">Legal Hold</div></div>
-<div class="card warning"><div class="v">$(FmtSize $stats.BytesEligible)</div><div class="l">Elegível Remoção</div></div>
-<div class="card success"><div class="v">$($stats.Removed.ToString('N0'))</div><div class="l">Removidos</div></div>
-<div class="card success"><div class="v">$(FmtSize $stats.BytesRemoved)</div><div class="l">Espaço Liberado</div></div>
-<div class="card $errCard"><div class="v">$($stats.Errors)</div><div class="l">Erros</div></div>
-</div>
-<div class="section"><h2>Containers ($($containerInfo.Count))</h2>
-<div class="scroll"><table>
-<thead><tr><th>Container</th><th>Política</th><th>Estado</th><th>Retenção</th><th>Version WORM</th><th>Legal Hold</th></tr></thead>
-<tbody>$ctrRows</tbody></table></div></div>
-$expSection
-$truncSection
-$errSection
-<div class="ft">Azure Immutability Cleanup v$version</div>
-</body></html>
-"@
-
-$htmlPath = Join-Path $OutputPath "ImmutabilityAudit_$ts.html"
-$html | Out-File -FilePath $htmlPath -Encoding utf8
-Log "Relatório HTML: $htmlPath" "SUCCESS"
-
-if ($ExportCsv) {
-    $csvPath = Join-Path $OutputPath "ImmutabilityAudit_$ts.csv"
-    $allResults | Where-Object Status -ne "NoPolicy" | Select-Object Account, Container, Blob, VersionId, IsCurrent,
-        SizeFmt, Tier, @{N='ExpiresOn';E={if($_.ExpiresOn){([DateTimeOffset]$_.ExpiresOn).ToString('yyyy-MM-dd HH:mm:ss')}else{''}}},
-        Mode, LegalHold, Status, DaysExp, Eligible, Action |
-        Export-Csv -Path $csvPath -NoTypeInformation -Encoding utf8
-    Log "Relatório CSV: $csvPath" "SUCCESS"
-}
-
-# ============================================================================
-# RESUMO FINAL
-# ============================================================================
-Write-Host ""
-Write-Host "  ============================================================" -ForegroundColor Cyan
-Write-Host "  RESUMO" -ForegroundColor Cyan
-Write-Host "  ============================================================" -ForegroundColor Cyan
-Write-Host ""
-Log "Accounts: $($stats.Accounts) | Containers: $($stats.Containers) (com política: $($stats.ContainersWithPolicy))" "INFO"
-Log "Páginas: $($stats.Pages) | Blobs analisados: $($stats.Blobs.ToString('N0')) ($(FmtSize $stats.BytesScanned))" "INFO"
-if ($stats.DetailedRowsDropped -gt 0) { Log "Relatório detalhado truncado: $($stats.DetailedRowsDropped.ToString('N0')) linha(s) não persistidas" "WARN" }
-Write-Host ""
-$el = if ($stats.Expired -gt 0) { "WARN" } else { "SUCCESS" }
-Log "Expirados: $($stats.Expired.ToString('N0')) | Ativos: $($stats.Active.ToString('N0')) | Legal Hold: $($stats.LegalHold)" $el
-Log "Elegível remoção: $($stats.Eligible.ToString('N0')) ($(FmtSize $stats.BytesEligible))" "INFO"
-
-if ($modeRemove) {
-    Write-Host ""
-    Log "REMOVIDOS: $($stats.Removed.ToString('N0')) | Espaço liberado: $(FmtSize $stats.BytesRemoved)" "SUCCESS"
-    Log "Políticas removidas: $($stats.PoliciesRemoved.ToString('N0'))" "SUCCESS"
-}
-if ($modePolicyOnly) {
-    Write-Host ""
-    Log "Políticas removidas: $($stats.PoliciesRemoved.ToString('N0'))" "SUCCESS"
-}
-
-Write-Host ""
-$el2 = if ($stats.Errors -gt 0) { "ERROR" } else { "SUCCESS" }
-Log "Erros: $($stats.Errors)" $el2
-Log "Duração: $($duration.ToString('hh\:mm\:ss'))" "INFO"
-Write-Host ""
+                # Liberar memória da página AGRESSIVAMENTE
+                $pageEligible.Clear()
+                $pageEligible = $null
+                [System.GC]::Collect([System.GC]::MaxGeneration, [System.GCCollectionMode]::Forced, $true)
+                [System.GC]::WaitForPending
