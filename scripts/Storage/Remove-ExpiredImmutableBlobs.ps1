@@ -501,10 +501,13 @@ $acctIdx = 0
                 $token = $null  # Reset antes do pipeline
                 $pipelineError = $null
 
+                $pageRetry = 0
+                :pageRetryLoop while ($true) {
                 try {
-                    Invoke-WithRetry -Context "ListBlobs($ctrName/pág$pageNum)" -Attempts $MaxRetryAttempts -BaseDelaySeconds $RetryDelaySeconds -Operation {
-                        Get-AzStorageBlob @listP -ErrorAction Stop
-                    } | ForEach-Object {
+                    # STREAMING DIRETO — sem Invoke-WithRetry que quebra o pipeline!
+                    # Get-AzStorageBlob emite objetos um-a-um no pipeline.
+                    # ForEach-Object processa cada um e solta imediatamente.
+                    Get-AzStorageBlob @listP -ErrorAction Stop | ForEach-Object {
                         # CRITICAL: $_ é o SDK blob object. Extrair TUDO que precisamos e soltar.
                         $pageBlobCount++
 
@@ -622,8 +625,23 @@ $acctIdx = 0
                 }
                 catch {
                     $pipelineError = $_.Exception.Message
+                    # Retry transiente no nível da página inteira
+                    if ($pageRetry -lt $MaxRetryAttempts -and (Test-TransientAzError -Message $pipelineError)) {
+                        $pageRetry++
+                        $delay = [math]::Min(30, [math]::Max(1, ($RetryDelaySeconds * [math]::Pow(2, $pageRetry - 1))))
+                        Log "    Pág ${pageNum}: erro transitório ($pageRetry/$MaxRetryAttempts): $pipelineError | retry em ${delay}s" "WARN"
+                        Start-Sleep -Seconds $delay
+                        # Reset contadores da página para re-processar
+                        $pageBlobCount = 0; $pageExpired = 0; $pageActive = 0; $pageLH = 0; $pageNoPolicy = 0
+                        $pageBytesEligible = [long]0; $pageEligible.Clear()
+                        $token = $null  # Re-fetch da mesma página (token anterior)
+                        if ($null -ne $listP['ContinuationToken']) { $token = $listP['ContinuationToken'] }
+                        continue pageRetryLoop
+                    }
                     AddError "ListBlobs($ctrName/pág$pageNum)" $pipelineError
                 }
+                break  # Sucesso ou erro não-transitório: sair do retry loop
+                }  # fim :pageRetryLoop
 
                 # Limpar progress inline
                 Write-Host "`r$(' ' * 140)`r" -NoNewline
