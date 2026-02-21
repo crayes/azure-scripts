@@ -53,6 +53,7 @@ param(
     [string]$OutputPath = "./Reports",
     [switch]$ExportCsv,
     [switch]$VerboseProgress,
+    [switch]$EnableAzCmdletVerbose,
     [switch]$Force,
     [ValidateSet('Manual', 'Conservative', 'Balanced', 'Aggressive')]
     [string]$ExecutionProfile = 'Manual',
@@ -314,6 +315,12 @@ Write-Host ""
 $modeLabel = if ($modeRemove) { "REMOVER BLOBS" } elseif ($modePolicyOnly) { "REMOVER POLÍTICAS" } else { "SIMULAÇÃO (DryRun)" }
 Log "Modo: $modeLabel | PageSize: $PageSize" "SECTION"
 Log "Perfil execução: $ExecutionProfile | Retry: $MaxRetryAttempts tentativa(s), delay base ${RetryDelaySeconds}s" "INFO"
+if ($EnableAzCmdletVerbose.IsPresent) {
+    Log "Verbose Az cmdlets: ATIVADO (maior uso de memória/saída)" "WARN"
+}
+else {
+    Log "Verbose Az cmdlets: DESATIVADO (estável). Use -EnableAzCmdletVerbose só para troubleshooting." "INFO"
+}
 if ($script:MemoryGuardEnabled -and $script:TotalPhysicalMemoryBytes -gt 0) {
     Log "Memory guard: ATIVO | RAM: $(FmtSize $script:TotalPhysicalMemoryBytes) | HighWatermark: ${MemoryUsageHighWatermarkPercent}% | MinAdaptivePageSize: $MinAdaptivePageSize" "INFO"
 }
@@ -475,6 +482,7 @@ foreach ($account in $accounts) {
                     Context        = $storageCtx
                     MaxCount       = $PageSize
                     IncludeVersion = $true
+                    Verbose        = $EnableAzCmdletVerbose.IsPresent
                 }
                 if ($null -ne $token) { $listP['ContinuationToken'] = $token }
 
@@ -655,7 +663,7 @@ foreach ($account in $accounts) {
                             }
                             try {
                                 Invoke-WithRetry -Context "RemovePolicy($($item.Blob))" -Attempts $MaxRetryAttempts -BaseDelaySeconds $RetryDelaySeconds -Operation {
-                                    Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop
+                                    Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop -Verbose:$EnableAzCmdletVerbose.IsPresent
                                 } | Out-Null
                                 $item.Action = "PolicyRemoved"
                                 $stats.PoliciesRemoved++
@@ -686,7 +694,7 @@ foreach ($account in $accounts) {
                                 if ($item.Mode) {
                                     try {
                                         Invoke-WithRetry -Context "RemovePolicy($($item.Blob))" -Attempts $MaxRetryAttempts -BaseDelaySeconds $RetryDelaySeconds -Operation {
-                                            Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop
+                                            Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop -Verbose:$EnableAzCmdletVerbose.IsPresent
                                         } | Out-Null
                                         $stats.PoliciesRemoved++
                                     }
@@ -706,7 +714,7 @@ foreach ($account in $accounts) {
                                 if ($item.VersionId) { $delP['VersionId'] = $item.VersionId }
 
                                 Invoke-WithRetry -Context "RemoveBlob($($item.Blob))" -Attempts $MaxRetryAttempts -BaseDelaySeconds $RetryDelaySeconds -Operation {
-                                    Remove-AzStorageBlob @delP -ErrorAction Stop
+                                    Remove-AzStorageBlob @delP -ErrorAction Stop -Verbose:$EnableAzCmdletVerbose.IsPresent
                                 } | Out-Null
 
                                 $item.Action = "Removed"
@@ -782,7 +790,7 @@ foreach ($account in $accounts) {
                         if ($qItem.Mode) {
                             try {
                                 Invoke-WithRetry -Context "ThresholdPolicy($($qItem.Blob))" -Attempts $MaxRetryAttempts -BaseDelaySeconds $RetryDelaySeconds -Operation {
-                                    Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop
+                                    Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop -Verbose:$EnableAzCmdletVerbose.IsPresent
                                 } | Out-Null
                                 $stats.PoliciesRemoved++
                             }
@@ -792,7 +800,7 @@ foreach ($account in $accounts) {
                             $delP = @{ Container = $qItem.Container; Blob = $qItem.Blob; Context = $storageCtx; Force = $true }
                             if ($qItem.VersionId) { $delP['VersionId'] = $qItem.VersionId }
                             Invoke-WithRetry -Context "ThresholdRemove($($qItem.Blob))" -Attempts $MaxRetryAttempts -BaseDelaySeconds $RetryDelaySeconds -Operation {
-                                Remove-AzStorageBlob @delP -ErrorAction Stop
+                                Remove-AzStorageBlob @delP -ErrorAction Stop -Verbose:$EnableAzCmdletVerbose.IsPresent
                             } | Out-Null
                             $qItem.Action = "Removed"; $stats.Removed++; $stats.BytesRemoved += $qItem.Size
                             if ($verbose -or $tIdx -le 10 -or $tIdx % 100 -eq 0 -or $tIdx -eq $thresholdQueue.Count) {
