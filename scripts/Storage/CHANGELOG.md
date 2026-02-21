@@ -1,5 +1,25 @@
 # Remove-ExpiredImmutableBlobs — Changelog
 
+## v3.3.0 (2026-02-20) — Controle de memória e estabilidade em Windows
+
+### Correções de estabilidade
+- Mitigação de crescimento de memória em varreduras longas: resultados detalhados agora são limitados por `-MaxDetailedResults` (padrão 1000)
+- Novo memory guard adaptativo para reduzir `PageSize` automaticamente quando o uso de memória do processo passa do limite configurado
+- Ajuste automático de `PageSize` para `1000` em Windows com baixa RAM quando `-PageSize` não é informado
+
+### Novos parâmetros
+| Parâmetro | Tipo | Padrão | Descrição |
+|-----------|------|--------|-----------|
+| `-MaxDetailedResults` | int | 1000 | Limita linhas detalhadas retidas para relatório/CSV |
+| `-MemoryUsageHighWatermarkPercent` | int | 90 | Percentual para acionar redução adaptativa de `PageSize` |
+| `-MinAdaptivePageSize` | int | 1000 | Valor mínimo para `PageSize` na redução automática |
+| `-DisableMemoryGuard` | switch | | Desativa ajuste automático por memória |
+
+### Observabilidade
+- Relatório HTML agora exibe observação quando o detalhamento for truncado por proteção de memória
+
+---
+
 ## v3.2.0 (2026-02-20) — Estabilidade e desempenho
 
 ### Segurança operacional

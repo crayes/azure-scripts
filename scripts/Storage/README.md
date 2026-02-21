@@ -24,6 +24,8 @@ Este script automatiza todo o processo: identifica blobs expirados, remove a pol
 - **Progress inline**: Contador atualizado em tempo real durante análise (sem spam de linhas)
 - **Retry com backoff**: Reexecução automática para falhas transitórias (429/timeout/5xx)
 - **Perfis de execução**: presets para estabilidade/desempenho sem alterar a lógica funcional
+- **Memory guard adaptativo**: reduz `PageSize` automaticamente sob alta pressão de memória (especialmente em Windows com pouca RAM)
+- **Limite de resultados detalhados**: controla crescimento de memória no relatório/CSV sem perder contadores globais
 - **Relatório HTML**: Dashboard visual com estatísticas e tabela de blobs
 - **Export CSV**: Dados estruturados para análise em Excel
 - **Threshold mode**: Executa ações apenas em contas acima de N TB
@@ -97,6 +99,9 @@ Connect-AzAccount -UseDeviceAuthentication
 
 # Perfil recomendado para produção (estabilidade + performance)
 .\Remove-ExpiredImmutableBlobs.ps1 -RemoveBlobs -ExecutionProfile Balanced
+
+# Ambiente Windows com 16 GB: limitar detalhamento e ajustar memória
+.\Remove-ExpiredImmutableBlobs.ps1 -RemoveBlobs -PageSize 1000 -MaxDetailedResults 1000
 ```
 
 ## Parâmetros
@@ -120,6 +125,10 @@ Connect-AzAccount -UseDeviceAuthentication
 | `-MaxDaysExpired` | int | 0 | Só blobs expirados há N+ dias |
 | `-MinAccountSizeTB` | int | 0 | Ação só em contas ≥ N TB |
 | `-PageSize` | int | 5000 | Blobs por página (10–5000) |
+| `-MaxDetailedResults` | int | 1000 | Máximo de linhas detalhadas mantidas em memória para relatório/CSV |
+| `-MemoryUsageHighWatermarkPercent` | int | 90 | Percentual de uso de memória para acionar redução automática de `PageSize` |
+| `-MinAdaptivePageSize` | int | 1000 | Piso de `PageSize` ao reduzir automaticamente |
+| `-DisableMemoryGuard` | switch | | Desativa o ajuste automático por memória |
 
 > **Common Parameters (PowerShell):** `-WhatIf` e `-Confirm` são suportados para operações destrutivas.
 
@@ -173,6 +182,8 @@ Gera dashboard em `./Reports/ImmutabilityAudit_<timestamp>.html` com:
 - Modo destrutivo exige confirmação textual (`CONFIRMAR`) quando não usa `-Force`
 - Login Azure com fallback automático para Device Code quando necessário
 - Memória liberada página a página para containers grandes (10TB+)
+- Em Windows com pouca RAM, o script pode reduzir automaticamente o `PageSize` quando o uso de memória sobe
+- O detalhamento no relatório pode ser truncado para manter estabilidade; os contadores globais continuam íntegros
 
 ## Permissões necessárias
 

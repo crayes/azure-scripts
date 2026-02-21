@@ -33,7 +33,7 @@
     .\Remove-ExpiredImmutableBlobs.ps1 -RemoveBlobs -ExecutionProfile Balanced -Force -Confirm:`$false
 
 .NOTES
-    Versão: 3.2.0 | Requer: Az.Accounts, Az.Storage | PowerShell 7.0+
+    Versão: 3.3.0 | Requer: Az.Accounts, Az.Storage | PowerShell 7.0+
 #>
 
 #Requires -Version 7.0
@@ -60,13 +60,17 @@ param(
     [ValidateRange(1, 30)] [int]$RetryDelaySeconds = 2,
     [int]$MaxDaysExpired = 0,
     [int]$MinAccountSizeTB = 0,
-    [ValidateRange(10, 5000)] [int]$PageSize = 5000
+    [ValidateRange(10, 5000)] [int]$PageSize = 5000,
+    [ValidateRange(100, 500000)] [int]$MaxDetailedResults = 1000,
+    [ValidateRange(70, 99)] [int]$MemoryUsageHighWatermarkPercent = 90,
+    [ValidateRange(100, 5000)] [int]$MinAdaptivePageSize = 1000,
+    [switch]$DisableMemoryGuard
 )
 
 # ============================================================================
 # CONFIGURAÇÃO
 # ============================================================================
-$version = "3.2.0"
+$version = "3.3.0"
 $now = [DateTimeOffset]::UtcNow
 $startTime = Get-Date
 
@@ -92,6 +96,29 @@ if ($ExecutionProfile -ne 'Manual') {
     }
 }
 
+# Guardião de memória (principalmente para ambientes Windows com menor RAM)
+$script:IsWindowsOS = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)
+$script:MemoryGuardEnabled = -not $DisableMemoryGuard.IsPresent
+$script:TotalPhysicalMemoryBytes = [long]0
+
+if ($script:IsWindowsOS -and $script:MemoryGuardEnabled) {
+    try {
+        $memInfo = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
+        $script:TotalPhysicalMemoryBytes = [long]$memInfo.TotalPhysicalMemory
+    }
+    catch {
+        $script:MemoryGuardEnabled = $false
+    }
+}
+
+if ($MinAdaptivePageSize -gt $PageSize) {
+    $MinAdaptivePageSize = $PageSize
+}
+
+if ($script:IsWindowsOS -and -not $PSBoundParameters.ContainsKey('PageSize') -and $script:TotalPhysicalMemoryBytes -gt 0 -and $script:TotalPhysicalMemoryBytes -le 20GB) {
+    $PageSize = 1000
+}
+
 # Contadores
 $stats = @{
     Accounts = 0; Containers = 0; ContainersWithPolicy = 0
@@ -99,6 +126,7 @@ $stats = @{
     Expired = 0; Active = 0; LegalHold = 0
     Eligible = 0; Removed = 0; PoliciesRemoved = 0; Errors = 0
     BytesScanned = [long]0; BytesEligible = [long]0; BytesRemoved = [long]0
+    DetailedRowsDropped = 0
     ErrorList = [System.Collections.Generic.List[string]]::new()
 }
 
@@ -139,6 +167,40 @@ function FmtSize {
 function Throughput { param([int]$N, [datetime]$Since); $s = ((Get-Date)-$Since).TotalSeconds; if($s -gt 0){"$([math]::Round($N/$s,1))/s"}else{"--"} }
 
 function AddError { param([string]$Ctx, [string]$Err); $stats.Errors++; $stats.ErrorList.Add("[$Ctx] $Err"); Log "[$Ctx] $Err" "ERROR" }
+
+function Get-ProcessMemoryUsagePercent {
+    if (-not $script:MemoryGuardEnabled -or $script:TotalPhysicalMemoryBytes -le 0) { return $null }
+
+    try {
+        $ws = [System.Diagnostics.Process]::GetCurrentProcess().WorkingSet64
+        return [int][math]::Round(($ws / $script:TotalPhysicalMemoryBytes) * 100, 0)
+    }
+    catch {
+        return $null
+    }
+}
+
+function Invoke-AdaptiveMemoryGuard {
+    param(
+        [int]$CurrentPageSize,
+        [int]$MinPageSize,
+        [int]$HighWatermarkPercent
+    )
+
+    $usage = Get-ProcessMemoryUsagePercent
+    if ($null -eq $usage) {
+        return [PSCustomObject]@{ AdjustedPageSize = $CurrentPageSize; UsagePercent = $null; Changed = $false }
+    }
+
+    if ($usage -lt $HighWatermarkPercent -or $CurrentPageSize -le $MinPageSize) {
+        return [PSCustomObject]@{ AdjustedPageSize = $CurrentPageSize; UsagePercent = $usage; Changed = $false }
+    }
+
+    $target = [int][math]::Floor($CurrentPageSize * 0.75)
+    $newPageSize = [math]::Max($MinPageSize, $target)
+
+    return [PSCustomObject]@{ AdjustedPageSize = $newPageSize; UsagePercent = $usage; Changed = ($newPageSize -lt $CurrentPageSize) }
+}
 
 function Test-BlobNotFoundError {
     param([string]$Message)
@@ -225,9 +287,16 @@ Write-Host ""
 $modeLabel = if ($modeRemove) { "REMOVER BLOBS" } elseif ($modePolicyOnly) { "REMOVER POLÍTICAS" } else { "SIMULAÇÃO (DryRun)" }
 Log "Modo: $modeLabel | PageSize: $PageSize" "SECTION"
 Log "Perfil execução: $ExecutionProfile | Retry: $MaxRetryAttempts tentativa(s), delay base ${RetryDelaySeconds}s" "INFO"
+if ($script:IsWindowsOS -and $script:MemoryGuardEnabled -and $script:TotalPhysicalMemoryBytes -gt 0) {
+    Log "Memory guard: ATIVO | RAM: $(FmtSize $script:TotalPhysicalMemoryBytes) | HighWatermark: ${MemoryUsageHighWatermarkPercent}% | MinAdaptivePageSize: $MinAdaptivePageSize" "INFO"
+}
+elseif ($DisableMemoryGuard.IsPresent) {
+    Log "Memory guard: DESATIVADO via -DisableMemoryGuard" "WARN"
+}
 if ($verbose) { Log "Verbose: ATIVADO" "INFO" }
 if ($MaxDaysExpired -gt 0) { Log "Filtro: apenas expirados há >$MaxDaysExpired dias" "INFO" }
 if ($MinAccountSizeTB -gt 0) { Log "Threshold: ação apenas em contas >=${MinAccountSizeTB}TB" "INFO" }
+if ($MaxDetailedResults -gt 0) { Log "Relatório detalhado limitado a $MaxDetailedResults linha(s) para controlar memória" "INFO" }
 
 # ============================================================================
 # CONFIRMAÇÃO (modos destrutivos)
@@ -501,7 +570,14 @@ foreach ($account in $accounts) {
                         }
                     }
 
-                    if ($r.Status -ne "NoPolicy") { $allResults.Add($r) }
+                    if ($r.Status -ne "NoPolicy") {
+                        if ($allResults.Count -lt $MaxDetailedResults) {
+                            $allResults.Add($r)
+                        }
+                        else {
+                            $stats.DetailedRowsDropped++
+                        }
+                    }
                 }
 
                 # Limpar linha de progresso inline
@@ -640,6 +716,15 @@ foreach ($account in $accounts) {
                 # Liberar memória da página
                 $blobs = $null; $raw = $null; $pageEligible = $null
 
+                # Ajustar page size dinamicamente se memória estiver alta
+                $memGuard = Invoke-AdaptiveMemoryGuard -CurrentPageSize $PageSize -MinPageSize $MinAdaptivePageSize -HighWatermarkPercent $MemoryUsageHighWatermarkPercent
+                if ($memGuard.Changed) {
+                    Log "    Memory guard: uso $($memGuard.UsagePercent)% — reduzindo PageSize de $PageSize para $($memGuard.AdjustedPageSize)" "WARN"
+                    $PageSize = $memGuard.AdjustedPageSize
+                    [System.GC]::Collect()
+                    [System.GC]::WaitForPendingFinalizers()
+                }
+
             } while ($null -ne $token)
             # ============== FIM DA PAGINAÇÃO DO CONTAINER ==============
 
@@ -755,6 +840,11 @@ if ($expBlobs.Count -gt 0) {
 "@
 }
 
+$truncSection = ""
+if ($stats.DetailedRowsDropped -gt 0) {
+    $truncSection = "<div class='section'><h2>Observação de Memória</h2><div style='padding:16px;color:#856404;background:#fff3cd'>Relatório detalhado foi limitado para controle de memória. Linhas não persistidas: $($stats.DetailedRowsDropped.ToString('N0')).</div></div>"
+}
+
 $errSection = ""
 if ($stats.ErrorList.Count -gt 0) {
     $errItems = ($stats.ErrorList | ForEach-Object { "<li>$([System.Net.WebUtility]::HtmlEncode($_))</li>" }) -join "`n"
@@ -807,6 +897,7 @@ $modeBadge
 <thead><tr><th>Container</th><th>Política</th><th>Estado</th><th>Retenção</th><th>Version WORM</th><th>Legal Hold</th></tr></thead>
 <tbody>$ctrRows</tbody></table></div></div>
 $expSection
+$truncSection
 $errSection
 <div class="ft">Azure Immutability Cleanup v$version</div>
 </body></html>
@@ -835,6 +926,7 @@ Write-Host "  ============================================================" -For
 Write-Host ""
 Log "Accounts: $($stats.Accounts) | Containers: $($stats.Containers) (com política: $($stats.ContainersWithPolicy))" "INFO"
 Log "Páginas: $($stats.Pages) | Blobs analisados: $($stats.Blobs.ToString('N0')) ($(FmtSize $stats.BytesScanned))" "INFO"
+if ($stats.DetailedRowsDropped -gt 0) { Log "Relatório detalhado truncado: $($stats.DetailedRowsDropped.ToString('N0')) linha(s) não persistidas" "WARN" }
 Write-Host ""
 $el = if ($stats.Expired -gt 0) { "WARN" } else { "SUCCESS" }
 Log "Expirados: $($stats.Expired.ToString('N0')) | Ativos: $($stats.Active.ToString('N0')) | Legal Hold: $($stats.LegalHold)" $el
