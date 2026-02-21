@@ -753,6 +753,7 @@ $acctIdx = 0
                     }
                     else {
                         # =============================================
+                        # =============================================
                         # DELEÇÃO VIA SUBPROCESS (v4.2 — memória isolada)
                         # Cada batch roda num processo pwsh separado.
                         # Quando o processo morre, o OS libera TODA a memória.
@@ -774,9 +775,54 @@ $acctIdx = 0
                         }
 
                         if ($storageKey) {
-                            # Serializar lista para temp file (JSON lines — um blob por linha)
+                            # Dir para batches e script helper
                             $batchDir = Join-Path $OutputPath ".batches_$ts"
                             if (-not (Test-Path $batchDir)) { New-Item -ItemType Directory -Path $batchDir -Force | Out-Null }
+
+                            # Gerar script helper em disco (executado por cada subprocess)
+                            $helperScript = Join-Path $batchDir "delete_helper.ps1"
+                            $helperContent = @'
+param(
+    [string]$AccountName,
+    [string]$AccountKey,
+    [string]$BatchFile,
+    [string]$ResultFile,
+    [bool]$DoRemove,
+    [bool]$DoPolicyOnly
+)
+$ErrorActionPreference = 'Continue'
+Import-Module Az.Storage -ErrorAction Stop
+$ctx = New-AzStorageContext -StorageAccountName $AccountName -StorageAccountKey $AccountKey
+$items = Get-Content $BatchFile -Raw | ConvertFrom-Json
+if ($items -isnot [array]) { $items = @($items) }
+$removed = 0; $errors = 0; $polRemoved = 0; $bytesRemoved = [long]0; $errList = @()
+foreach ($item in $items) {
+    try {
+        $polP = @{ Container = $item.Container; Blob = $item.Blob; Context = $ctx }
+        if ($item.VersionId) { $polP['VersionId'] = $item.VersionId }
+        if ($DoPolicyOnly) {
+            $null = Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop
+            $polRemoved++
+        } elseif ($DoRemove) {
+            if ($item.Mode) {
+                try { $null = Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop; $polRemoved++ }
+                catch { if ($_.Exception.Message -notmatch 'BlobNotFound|404|does not exist') {} }
+            }
+            $delP = @{ Container = $item.Container; Blob = $item.Blob; Context = $ctx; Force = $true }
+            if ($item.VersionId) { $delP['VersionId'] = $item.VersionId }
+            $null = Remove-AzStorageBlob @delP -ErrorAction Stop
+            $removed++; $bytesRemoved += $item.Size
+        }
+    } catch {
+        $e = $_.Exception.Message
+        if ($e -match 'BlobNotFound|404|does not exist') { <# OK - already deleted #> }
+        else { $errors++; if ($errList.Count -lt 10) { $errList += $e } }
+    }
+}
+@{ Removed = $removed; Errors = $errors; PoliciesRemoved = $polRemoved; BytesRemoved = $bytesRemoved; ErrorList = $errList } |
+    ConvertTo-Json -Depth 3 -Compress | Out-File -FilePath $ResultFile -Encoding utf8
+'@
+                            $helperContent | Out-File -FilePath $helperScript -Encoding utf8
 
                             for ($bi = 0; $bi -lt $totalEligible; $bi += $batchSize) {
                                 $batchNum++
@@ -790,43 +836,17 @@ $acctIdx = 0
 
                                 Log "    Batch $batchNum [$($bi+1)..$batchEnd/$totalEligible]: spawning subprocess..." "INFO"
 
-                                # Subprocess: roda deleção isolada, retorna resultado em JSON
-                                $subScript = @"
-`$ErrorActionPreference = 'Continue'
-Import-Module Az.Storage -ErrorAction Stop
-`$ctx = New-AzStorageContext -StorageAccountName '$acctName' -StorageAccountKey '$storageKey'
-`$items = Get-Content '$batchFile' -Raw | ConvertFrom-Json
-if (`$items -isnot [array]) { `$items = @(`$items) }
-`$removed = 0; `$errors = 0; `$polRemoved = 0; `$bytesRemoved = [long]0; `$errList = @()
-`$doRemove = `$$($modeRemove.ToString().ToLower()); `$doPolicyOnly = `$$($modePolicyOnly.ToString().ToLower())
-foreach (`$item in `$items) {
-    try {
-        `$polP = @{ Container = `$item.Container; Blob = `$item.Blob; Context = `$ctx }
-        if (`$doPolicyOnly) {
-            `$null = Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop
-            `$polRemoved++
-        } elseif (`$doRemove) {
-            if (`$item.Mode) {
-                try { `$null = Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop; `$polRemoved++ }
-                catch { if (`$_.Exception.Message -notmatch 'BlobNotFound|404|does not exist') {} }
-            }
-            `$delP = @{ Container = `$item.Container; Blob = `$item.Blob; Context = `$ctx; Force = `$true }
-            if (`$item.VersionId) { `$delP['VersionId'] = `$item.VersionId }
-            `$null = Remove-AzStorageBlob @delP -ErrorAction Stop
-            `$removed++; `$bytesRemoved += `$item.Size
-        }
-    } catch {
-        `$e = `$_.Exception.Message
-        if (`$e -match 'BlobNotFound|404|does not exist') { <# OK #> }
-        else { `$errors++; if (`$errList.Count -lt 10) { `$errList += `$e } }
-    }
-}
-@{ Removed = `$removed; Errors = `$errors; PoliciesRemoved = `$polRemoved; BytesRemoved = `$bytesRemoved; ErrorList = `$errList } |
-    ConvertTo-Json -Compress | Out-File -FilePath '$resultFile' -Encoding utf8
-"@
-                                # Executar subprocess
-                                $subProc = Start-Process -FilePath "pwsh" -ArgumentList "-NoProfile","-NonInteractive","-Command",$subScript `
-                                    -Wait -PassThru -NoNewWindow -RedirectStandardError ([System.IO.Path]::GetTempFileName())
+                                # Executar helper script em subprocess isolado
+                                $stderrFile = [System.IO.Path]::GetTempFileName()
+                                $subProc = Start-Process -FilePath "pwsh" -ArgumentList @(
+                                    "-NoProfile", "-NonInteractive", "-File", $helperScript,
+                                    "-AccountName", $acctName,
+                                    "-AccountKey", $storageKey,
+                                    "-BatchFile", $batchFile,
+                                    "-ResultFile", $resultFile,
+                                    "-DoRemove", "`$$modeRemove",
+                                    "-DoPolicyOnly", "`$$modePolicyOnly"
+                                ) -Wait -PassThru -NoNewWindow -RedirectStandardError $stderrFile
 
                                 # Ler resultado
                                 if (Test-Path $resultFile) {
@@ -840,26 +860,37 @@ foreach (`$item in `$items) {
                                         $pageErrors += $bResult.Errors
                                         $stats.Errors += $bResult.Errors
                                         if ($bResult.Removed -gt 0) { ResetConsecutiveErrors }
-                                        foreach ($errMsg in $bResult.ErrorList) {
-                                            if ($stats.ErrorList.Count -lt 200) { $stats.ErrorList.Add("[SubBatch$batchNum] $errMsg") }
+                                        foreach ($errMsg in @($bResult.ErrorList)) {
+                                            if ($errMsg -and $stats.ErrorList.Count -lt 200) { $stats.ErrorList.Add("[SubBatch$batchNum] $errMsg") }
                                         }
-                                        Log "    Batch ${batchNum}: $($bResult.Removed) removidos, $($bResult.Errors) erros ($(FmtSize $bResult.BytesRemoved))" "SUCCESS"
+                                        $batchLogLevel = if ($bResult.Errors -gt 0) { "WARN" } else { "SUCCESS" }
+                                        Log "    Batch ${batchNum}: $($bResult.Removed) removidos, $($bResult.Errors) erros ($(FmtSize $bResult.BytesRemoved))" $batchLogLevel
+                                        if ($bResult.ErrorList -and @($bResult.ErrorList).Count -gt 0) {
+                                            @($bResult.ErrorList) | Select-Object -First 3 | ForEach-Object {
+                                                Log "      ERRO: $_" "ERROR"
+                                            }
+                                        }
                                     } catch {
                                         Log "    Batch ${batchNum}: erro lendo resultado: $($_.Exception.Message)" "ERROR"
                                         $pageErrors++; $stats.Errors++
                                     }
                                     Remove-Item $resultFile -Force -ErrorAction SilentlyContinue
                                 } else {
-                                    Log "    Batch ${batchNum}: subprocess não gerou resultado (exit code: $($subProc.ExitCode))" "ERROR"
+                                    # Ler stderr para diagnóstico
+                                    $stderrContent = if (Test-Path $stderrFile) { (Get-Content $stderrFile -Raw) -replace "`r`n|`n"," " } else { "N/A" }
+                                    $stderrSnippet = if ($stderrContent.Length -gt 300) { $stderrContent.Substring(0, 300) } else { $stderrContent }
+                                    Log "    Batch ${batchNum}: subprocess falhou (exit: $($subProc.ExitCode)) stderr: $stderrSnippet" "ERROR"
                                     $pageErrors += $batchItems.Count; $stats.Errors += $batchItems.Count
                                 }
                                 Remove-Item $batchFile -Force -ErrorAction SilentlyContinue
+                                Remove-Item $stderrFile -Force -ErrorAction SilentlyContinue
 
                                 if (Test-MaxErrorsReached) { break }
                             }
                             # Limpar dir de batches
                             Remove-Item $batchDir -Recurse -Force -ErrorAction SilentlyContinue
                         }
+
                     }
 
                     $actionDur = ((Get-Date) - $actionStart).TotalSeconds
