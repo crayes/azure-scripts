@@ -67,7 +67,7 @@ param(
 # ============================================================================
 # CONFIGURAÇÃO
 # ============================================================================
-$version = "4.0.0"
+$version = "4.1.0"
 $now = [DateTimeOffset]::UtcNow
 $startTime = Get-Date
 
@@ -753,9 +753,14 @@ $acctIdx = 0
                     }
                     else {
                         # =============================================
-                        # DELEÇÃO SEQUENCIAL
+                        # DELEÇÃO SEQUENCIAL (v4.1 — sem Invoke-WithRetry, GC periódico)
                         # =============================================
                         $actionIdx = 0
+                        # Criar contexto FRESCO para deleção (isolado do scan)
+                        $deleteCtx = if ($storageKey) {
+                            New-AzStorageContext -StorageAccountName $acctName -StorageAccountKey $storageKey
+                        } else { $storageCtx }
+
                         foreach ($item in $pageEligible) {
                             $actionIdx++
                             if (Test-MaxErrorsReached) { break }
@@ -767,13 +772,25 @@ $acctIdx = 0
                                 continue
                             }
 
-                            $polP = @{ Container = $item.Container; Blob = $item.Blob; Context = $storageCtx }
+                            # GC a cada 200 deleções para evitar acúmulo
+                            if ($actionIdx % 200 -eq 0) {
+                                [System.GC]::Collect([System.GC]::MaxGeneration, [System.GCCollectionMode]::Forced, $true)
+                                [System.GC]::WaitForPendingFinalizers()
+                            }
+
+                            # Renovar contexto a cada 500 deleções (evita acúmulo interno do SDK)
+                            if ($actionIdx % 500 -eq 0 -and $storageKey) {
+                                $deleteCtx = New-AzStorageContext -StorageAccountName $acctName -StorageAccountKey $storageKey
+                                VLog "    Contexto renovado em $actionIdx deleções" "DEBUG"
+                            }
+
+                            $polP = @{ Container = $item.Container; Blob = $item.Blob; Context = $deleteCtx }
 
                             if ($modePolicyOnly) {
+                                $delRetry = 0
+                                :polRetry while ($true) {
                                 try {
-                                    Invoke-WithRetry -Context "RemovePolicy" -Attempts $MaxRetryAttempts -BaseDelaySeconds $RetryDelaySeconds -Operation {
-                                        Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop
-                                    } | Out-Null
+                                    $null = Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop
                                     $stats.PoliciesRemoved++
                                     ResetConsecutiveErrors
                                     if ($verbose -or $actionIdx -le 5 -or $actionIdx % 100 -eq 0 -or $actionIdx -eq $pageEligible.Count) {
@@ -783,16 +800,23 @@ $acctIdx = 0
                                 catch {
                                     $e = $_.Exception.Message
                                     if (Test-BlobNotFoundError -Message $e) { ResetConsecutiveErrors }
+                                    elseif ($delRetry -lt $MaxRetryAttempts -and (Test-TransientAzError -Message $e)) {
+                                        $delRetry++
+                                        Start-Sleep -Seconds ([math]::Min(30, $RetryDelaySeconds * [math]::Pow(2, $delRetry - 1)))
+                                        continue polRetry
+                                    }
                                     else { AddError "RemovePolicy($($item.Blob))" $e }
+                                }
+                                break
                                 }
                             }
                             elseif ($modeRemove) {
+                                $delRetry = 0
+                                :delRetry while ($true) {
                                 try {
                                     if ($item.Mode) {
                                         try {
-                                            Invoke-WithRetry -Context "Policy" -Attempts $MaxRetryAttempts -BaseDelaySeconds $RetryDelaySeconds -Operation {
-                                                Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop
-                                            } | Out-Null
+                                            $null = Remove-AzStorageBlobImmutabilityPolicy @polP -ErrorAction Stop
                                             $stats.PoliciesRemoved++
                                         }
                                         catch {
@@ -802,12 +826,10 @@ $acctIdx = 0
                                         }
                                     }
 
-                                    $delP = @{ Container = $item.Container; Blob = $item.Blob; Context = $storageCtx; Force = $true }
+                                    $delP = @{ Container = $item.Container; Blob = $item.Blob; Context = $deleteCtx; Force = $true }
                                     if ($item.VersionId) { $delP['VersionId'] = $item.VersionId }
 
-                                    Invoke-WithRetry -Context "Delete" -Attempts $MaxRetryAttempts -BaseDelaySeconds $RetryDelaySeconds -Operation {
-                                        Remove-AzStorageBlob @delP -ErrorAction Stop
-                                    } | Out-Null
+                                    $null = Remove-AzStorageBlob @delP -ErrorAction Stop
 
                                     $pageRemoved++; $stats.Removed++; $stats.BytesRemoved += $item.Size
                                     $ctrRemoved++
@@ -820,10 +842,18 @@ $acctIdx = 0
                                 catch {
                                     $e = $_.Exception.Message
                                     if ($e -match 'BlobNotFound|404|does not exist') { ResetConsecutiveErrors }
+                                    elseif ($delRetry -lt $MaxRetryAttempts -and (Test-TransientAzError -Message $e)) {
+                                        $delRetry++
+                                        Start-Sleep -Seconds ([math]::Min(30, $RetryDelaySeconds * [math]::Pow(2, $delRetry - 1)))
+                                        continue delRetry
+                                    }
                                     else { AddError "RemoveBlob($($item.Blob))" $e }
+                                }
+                                break
                                 }
                             }
                         }
+                        $deleteCtx = $null
                     }
 
                     $actionDur = ((Get-Date) - $actionStart).TotalSeconds
