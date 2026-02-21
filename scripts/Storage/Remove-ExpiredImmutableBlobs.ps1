@@ -831,8 +831,19 @@ foreach ($item in $items) {
                                 $batchFile = Join-Path $batchDir "batch_${pageNum}_${batchNum}.json"
                                 $resultFile = Join-Path $batchDir "result_${pageNum}_${batchNum}.json"
 
-                                # Escrever batch em disco
-                                $batchItems | ConvertTo-Json -Depth 3 -Compress | Out-File -FilePath $batchFile -Encoding utf8
+                                # Escrever batch em disco (JSON manual para preservar VersionId como string)
+                                $jsonLines = [System.Collections.Generic.List[string]]::new()
+                                $jsonLines.Add("[")
+                                for ($ji = 0; $ji -lt $batchItems.Count; $ji++) {
+                                    $it = $batchItems[$ji]
+                                    $jBlob = ($it.Blob -replace '\\','\\' -replace '"','\"')
+                                    $jVer = if ($it.VersionId) { "`"$($it.VersionId)`"" } else { "null" }
+                                    $jMode = if ($it.Mode) { "`"$($it.Mode)`"" } else { "null" }
+                                    $comma = if ($ji -lt $batchItems.Count - 1) { "," } else { "" }
+                                    $jsonLines.Add("{`"Container`":`"$($it.Container)`",`"Blob`":`"$jBlob`",`"VersionId`":$jVer,`"Size`":$($it.Size),`"Mode`":$jMode}$comma")
+                                }
+                                $jsonLines.Add("]")
+                                [System.IO.File]::WriteAllLines($batchFile, $jsonLines)
 
                                 Log "    Batch $batchNum [$($bi+1)..$batchEnd/$totalEligible]: spawning subprocess..." "INFO"
 
