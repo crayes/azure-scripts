@@ -1,0 +1,478 @@
+﻿<!DOCTYPE html><html lang='pt-BR'><head><meta charset='utf-8'>
+<title>Immutability Audit Report</title>
+<style>
+body { font-family: 'Segoe UI', Arial, sans-serif; margin: 20px; background: #1a1a2e; color: #e0e0e0; }
+h1 { color: #00d4ff; border-bottom: 2px solid #00d4ff; padding-bottom: 10px; }
+h2 { color: #7dd3fc; margin-top: 30px; }
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
+.card { background: #16213e; border-radius: 8px; padding: 20px; border-left: 4px solid #00d4ff; }
+.card.success { border-left-color: #00e676; } .card.warn { border-left-color: #ffc107; } .card.error { border-left-color: #ff5252; }
+.card .label { font-size: 0.85em; color: #94a3b8; text-transform: uppercase; }
+.card .value { font-size: 1.8em; font-weight: bold; margin-top: 5px; }
+table { border-collapse: collapse; width: 100%; margin: 15px 0; }
+th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #334155; }
+th { background: #0f3460; color: #7dd3fc; font-weight: 600; }
+tr:hover { background: #1e3a5f; }
+.footer { margin-top: 40px; padding-top: 15px; border-top: 1px solid #334155; color: #64748b; font-size: 0.85em; }
+.tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; }
+.tag-remove { background: #ff525233; color: #ff5252; } .tag-dry { background: #ffc10733; color: #ffc107; } .tag-policy { background: #00e67633; color: #00e676; }
+</style></head><body>
+<h1>🔒 Immutability Audit Report <span class='tag tag-remove'>REMOVER</span></h1>
+<p>21/02/2026 16:38:55 | Duração: 00:00:19 | v2.0.0 (.NET)</p>
+<div class='summary'>
+<div class='card '><div class='label'>Blobs Analisados</div><div class='value'>5,000</div></div>
+<div class='card warn'><div class='label'>Expirados</div><div class='value'>5,000</div></div>
+<div class='card '><div class='label'>Ativos</div><div class='value'>0</div></div>
+<div class='card '><div class='label'>Legal Hold</div><div class='value'>0</div></div>
+<div class='card warn'><div class='label'>Elegíveis</div><div class='value'>5,000 (1.44 GB)</div></div>
+<div class='card success'><div class='label'>Removidos</div><div class='value'>256 (7.99 MB)</div></div>
+<div class='card success'><div class='label'>Políticas Removidas</div><div class='value'>0</div></div>
+<div class='card error'><div class='label'>Erros</div><div class='value'>59</div></div>
+</div>
+<h2>Containers</h2>
+<table><tr><th>Account</th><th>Container</th><th>Blobs</th><th>Elegíveis</th><th>Tamanho</th><th>Removidos</th><th>Erros</th></tr>
+<tr><td>storage2025v2</td><td>cloud1</td><td>5,000</td><td>5,000</td><td>1.44 GB</td><td>256</td><td>0</td></tr>
+</table>
+<h2>Erros (primeiros 20)</h2><table><tr><th>#</th><th>Mensagem</th></tr>
+<tr><td>1</td><td>RemovePolicy(Veeam/Archive/Veeam/062e4216-6c7d-4c6c-802a-d3f20e4ec7de/9cbd8b8e-9173-475b-89f4-c5dc4892819e/data.v2/Data/{3ee89759-5bcb-4d18-822d-f9473de24b3f}/{23fc064f-2615-4828-ad6a-74563965006b}/133759_532e7fee4ed12507838eb40e46cc1d69_00000000000000000000000000000000): Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:1dc079d6-101e-00d8-1f7a-a342ee000000
+Time:2026-02-21T21:38:54.1533920Z
+Status: 400 (Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.)
+ErrorCode: ImmutabilityPolicyDeleteOnLockedPolicy
+
+Content:
+﻿&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;
+&lt;Error&gt;&lt;Code&gt;ImmutabilityPolicyDeleteOnLockedPolicy&lt;/Code&gt;&lt;Message&gt;Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:1dc079d6-101e-00d8-1f7a-a342ee000000
+Time:2026-02-21T21:38:54.1533920Z&lt;/Message&gt;&lt;/Error&gt;
+
+Headers:
+Server: Windows-Azure-Blob/1.0 Microsoft-HTTPAPI/2.0
+x-ms-error-code: ImmutabilityPolicyDeleteOnLockedPolicy
+x-ms-request-id: 1dc079d6-101e-00d8-1f7a-a342ee000000
+x-ms-version: 2025-07-05
+x-ms-client-request-id: bb66a9a9-9531-49e9-b71e-bf634ff3fb35
+Date: Sat, 21 Feb 2026 21:38:53 GMT
+Content-Length: 285
+Content-Type: application/xml
+</td></tr>
+<tr><td>2</td><td>RemovePolicy(Veeam/Archive/Veeam/062e4216-6c7d-4c6c-802a-d3f20e4ec7de/9cbd8b8e-9173-475b-89f4-c5dc4892819e/data.v2/Data/{3ee89759-5bcb-4d18-822d-f9473de24b3f}/{23fc064f-2615-4828-ad6a-74563965006b}/133760_e883ebb8d29c797be988db3d8e085798_00000000000000000000000000000000): Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:fa41c07f-001e-006d-437a-a3d1fc000000
+Time:2026-02-21T21:38:54.1576948Z
+Status: 400 (Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.)
+ErrorCode: ImmutabilityPolicyDeleteOnLockedPolicy
+
+Content:
+﻿&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;
+&lt;Error&gt;&lt;Code&gt;ImmutabilityPolicyDeleteOnLockedPolicy&lt;/Code&gt;&lt;Message&gt;Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:fa41c07f-001e-006d-437a-a3d1fc000000
+Time:2026-02-21T21:38:54.1576948Z&lt;/Message&gt;&lt;/Error&gt;
+
+Headers:
+Server: Windows-Azure-Blob/1.0 Microsoft-HTTPAPI/2.0
+x-ms-error-code: ImmutabilityPolicyDeleteOnLockedPolicy
+x-ms-request-id: fa41c07f-001e-006d-437a-a3d1fc000000
+x-ms-version: 2025-07-05
+x-ms-client-request-id: 12c019e1-1656-4e4c-b918-aeb024d2bdf6
+Date: Sat, 21 Feb 2026 21:38:53 GMT
+Content-Length: 285
+Content-Type: application/xml
+</td></tr>
+<tr><td>3</td><td>RemovePolicy(Veeam/Archive/Veeam/062e4216-6c7d-4c6c-802a-d3f20e4ec7de/9cbd8b8e-9173-475b-89f4-c5dc4892819e/data.v2/Data/{3ee89759-5bcb-4d18-822d-f9473de24b3f}/{23fc064f-2615-4828-ad6a-74563965006b}/133764_c3f37164324988503492772ab4796837_00000000000000000000000000000000): Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:90ce98dc-701e-0067-0c7a-a3754b000000
+Time:2026-02-21T21:38:54.1577327Z
+Status: 400 (Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.)
+ErrorCode: ImmutabilityPolicyDeleteOnLockedPolicy
+
+Content:
+﻿&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;
+&lt;Error&gt;&lt;Code&gt;ImmutabilityPolicyDeleteOnLockedPolicy&lt;/Code&gt;&lt;Message&gt;Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:90ce98dc-701e-0067-0c7a-a3754b000000
+Time:2026-02-21T21:38:54.1577327Z&lt;/Message&gt;&lt;/Error&gt;
+
+Headers:
+Server: Windows-Azure-Blob/1.0 Microsoft-HTTPAPI/2.0
+x-ms-error-code: ImmutabilityPolicyDeleteOnLockedPolicy
+x-ms-request-id: 90ce98dc-701e-0067-0c7a-a3754b000000
+x-ms-version: 2025-07-05
+x-ms-client-request-id: 623ddd31-4280-42f4-9709-9035738b3c9b
+Date: Sat, 21 Feb 2026 21:38:53 GMT
+Content-Length: 285
+Content-Type: application/xml
+</td></tr>
+<tr><td>4</td><td>RemovePolicy(Veeam/Archive/Veeam/062e4216-6c7d-4c6c-802a-d3f20e4ec7de/9cbd8b8e-9173-475b-89f4-c5dc4892819e/data.v2/Data/{3ee89759-5bcb-4d18-822d-f9473de24b3f}/{23fc064f-2615-4828-ad6a-74563965006b}/133756_3a9aa619fa7c99da016902920c188043_00000000000000000000000000000000): Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:e77bf9f0-001e-0020-2d7a-a31e10000000
+Time:2026-02-21T21:38:54.1475378Z
+Status: 400 (Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.)
+ErrorCode: ImmutabilityPolicyDeleteOnLockedPolicy
+
+Content:
+﻿&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;
+&lt;Error&gt;&lt;Code&gt;ImmutabilityPolicyDeleteOnLockedPolicy&lt;/Code&gt;&lt;Message&gt;Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:e77bf9f0-001e-0020-2d7a-a31e10000000
+Time:2026-02-21T21:38:54.1475378Z&lt;/Message&gt;&lt;/Error&gt;
+
+Headers:
+Server: Windows-Azure-Blob/1.0 Microsoft-HTTPAPI/2.0
+x-ms-error-code: ImmutabilityPolicyDeleteOnLockedPolicy
+x-ms-request-id: e77bf9f0-001e-0020-2d7a-a31e10000000
+x-ms-version: 2025-07-05
+x-ms-client-request-id: fe481570-4caa-43e8-a84e-de77808ce6ba
+Date: Sat, 21 Feb 2026 21:38:53 GMT
+Content-Length: 285
+Content-Type: application/xml
+</td></tr>
+<tr><td>5</td><td>RemovePolicy(Veeam/Archive/Veeam/062e4216-6c7d-4c6c-802a-d3f20e4ec7de/9cbd8b8e-9173-475b-89f4-c5dc4892819e/data.v2/Data/{3ee89759-5bcb-4d18-822d-f9473de24b3f}/{23fc064f-2615-4828-ad6a-74563965006b}/133752_649288f17870b422d1536dbcc7342e03_00000000000000000000000000000000): Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:c0bc04c6-601e-0009-2f7a-a32064000000
+Time:2026-02-21T21:38:54.1538260Z
+Status: 400 (Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.)
+ErrorCode: ImmutabilityPolicyDeleteOnLockedPolicy
+
+Content:
+﻿&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;
+&lt;Error&gt;&lt;Code&gt;ImmutabilityPolicyDeleteOnLockedPolicy&lt;/Code&gt;&lt;Message&gt;Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:c0bc04c6-601e-0009-2f7a-a32064000000
+Time:2026-02-21T21:38:54.1538260Z&lt;/Message&gt;&lt;/Error&gt;
+
+Headers:
+Server: Windows-Azure-Blob/1.0 Microsoft-HTTPAPI/2.0
+x-ms-error-code: ImmutabilityPolicyDeleteOnLockedPolicy
+x-ms-request-id: c0bc04c6-601e-0009-2f7a-a32064000000
+x-ms-version: 2025-07-05
+x-ms-client-request-id: 1d2849f6-67d7-4e64-81fc-23651945a842
+Date: Sat, 21 Feb 2026 21:38:53 GMT
+Content-Length: 285
+Content-Type: application/xml
+</td></tr>
+<tr><td>6</td><td>RemovePolicy(Veeam/Archive/Veeam/062e4216-6c7d-4c6c-802a-d3f20e4ec7de/9cbd8b8e-9173-475b-89f4-c5dc4892819e/data.v2/Data/{3ee89759-5bcb-4d18-822d-f9473de24b3f}/{23fc064f-2615-4828-ad6a-74563965006b}/133704_acc1e8a02425f59b7b938282ab832cec_00000000000000000000000000000000): Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:e60b2d60-201e-00d3-277a-a3b985000000
+Time:2026-02-21T21:38:54.1372812Z
+Status: 400 (Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.)
+ErrorCode: ImmutabilityPolicyDeleteOnLockedPolicy
+
+Content:
+﻿&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;
+&lt;Error&gt;&lt;Code&gt;ImmutabilityPolicyDeleteOnLockedPolicy&lt;/Code&gt;&lt;Message&gt;Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:e60b2d60-201e-00d3-277a-a3b985000000
+Time:2026-02-21T21:38:54.1372812Z&lt;/Message&gt;&lt;/Error&gt;
+
+Headers:
+Server: Windows-Azure-Blob/1.0 Microsoft-HTTPAPI/2.0
+x-ms-error-code: ImmutabilityPolicyDeleteOnLockedPolicy
+x-ms-request-id: e60b2d60-201e-00d3-277a-a3b985000000
+x-ms-version: 2025-07-05
+x-ms-client-request-id: 01231308-c9ca-40bb-a025-caf760efec9e
+Date: Sat, 21 Feb 2026 21:38:53 GMT
+Content-Length: 285
+Content-Type: application/xml
+</td></tr>
+<tr><td>7</td><td>RemovePolicy(Veeam/Archive/Veeam/062e4216-6c7d-4c6c-802a-d3f20e4ec7de/9cbd8b8e-9173-475b-89f4-c5dc4892819e/data.v2/Data/{3ee89759-5bcb-4d18-822d-f9473de24b3f}/{23fc064f-2615-4828-ad6a-74563965006b}/133715_7b9fc816454c2f92cbe7c3e95a9102e5_00000000000000000000000000000000): Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:7208db4a-301e-003b-747a-a32013000000
+Time:2026-02-21T21:38:54.0050354Z
+Status: 400 (Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.)
+ErrorCode: ImmutabilityPolicyDeleteOnLockedPolicy
+
+Content:
+﻿&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;
+&lt;Error&gt;&lt;Code&gt;ImmutabilityPolicyDeleteOnLockedPolicy&lt;/Code&gt;&lt;Message&gt;Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:7208db4a-301e-003b-747a-a32013000000
+Time:2026-02-21T21:38:54.0050354Z&lt;/Message&gt;&lt;/Error&gt;
+
+Headers:
+Server: Windows-Azure-Blob/1.0 Microsoft-HTTPAPI/2.0
+x-ms-error-code: ImmutabilityPolicyDeleteOnLockedPolicy
+x-ms-request-id: 7208db4a-301e-003b-747a-a32013000000
+x-ms-version: 2025-07-05
+x-ms-client-request-id: 984049aa-b4a5-420e-97d5-cc689d1f7ffd
+Date: Sat, 21 Feb 2026 21:38:53 GMT
+Content-Length: 285
+Content-Type: application/xml
+</td></tr>
+<tr><td>8</td><td>RemovePolicy(Veeam/Archive/Veeam/062e4216-6c7d-4c6c-802a-d3f20e4ec7de/9cbd8b8e-9173-475b-89f4-c5dc4892819e/data.v2/Data/{3ee89759-5bcb-4d18-822d-f9473de24b3f}/{23fc064f-2615-4828-ad6a-74563965006b}/133706_a03e68baa58018b8f4015686657235a0_00000000000000000000000000000000): Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:8ca0f68c-b01e-0068-247a-a30327000000
+Time:2026-02-21T21:38:54.0039625Z
+Status: 400 (Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.)
+ErrorCode: ImmutabilityPolicyDeleteOnLockedPolicy
+
+Content:
+﻿&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;
+&lt;Error&gt;&lt;Code&gt;ImmutabilityPolicyDeleteOnLockedPolicy&lt;/Code&gt;&lt;Message&gt;Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:8ca0f68c-b01e-0068-247a-a30327000000
+Time:2026-02-21T21:38:54.0039625Z&lt;/Message&gt;&lt;/Error&gt;
+
+Headers:
+Server: Windows-Azure-Blob/1.0 Microsoft-HTTPAPI/2.0
+x-ms-error-code: ImmutabilityPolicyDeleteOnLockedPolicy
+x-ms-request-id: 8ca0f68c-b01e-0068-247a-a30327000000
+x-ms-version: 2025-07-05
+x-ms-client-request-id: f62ba986-ac01-4a4d-a0c1-920ea3b692c1
+Date: Sat, 21 Feb 2026 21:38:53 GMT
+Content-Length: 285
+Content-Type: application/xml
+</td></tr>
+<tr><td>9</td><td>RemovePolicy(Veeam/Archive/Veeam/062e4216-6c7d-4c6c-802a-d3f20e4ec7de/9cbd8b8e-9173-475b-89f4-c5dc4892819e/data.v2/Data/{3ee89759-5bcb-4d18-822d-f9473de24b3f}/{23fc064f-2615-4828-ad6a-74563965006b}/133738_2eca4d6695ea9ebeb8724847a490b727_00000000000000000000000000000000): Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:754dce38-301e-00cf-747a-a3ebe5000000
+Time:2026-02-21T21:38:53.9973684Z
+Status: 400 (Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.)
+ErrorCode: ImmutabilityPolicyDeleteOnLockedPolicy
+
+Content:
+﻿&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;
+&lt;Error&gt;&lt;Code&gt;ImmutabilityPolicyDeleteOnLockedPolicy&lt;/Code&gt;&lt;Message&gt;Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:754dce38-301e-00cf-747a-a3ebe5000000
+Time:2026-02-21T21:38:53.9973684Z&lt;/Message&gt;&lt;/Error&gt;
+
+Headers:
+Server: Windows-Azure-Blob/1.0 Microsoft-HTTPAPI/2.0
+x-ms-error-code: ImmutabilityPolicyDeleteOnLockedPolicy
+x-ms-request-id: 754dce38-301e-00cf-747a-a3ebe5000000
+x-ms-version: 2025-07-05
+x-ms-client-request-id: 360f4573-0aa3-4cea-9106-9dd4741df191
+Date: Sat, 21 Feb 2026 21:38:53 GMT
+Content-Length: 285
+Content-Type: application/xml
+</td></tr>
+<tr><td>10</td><td>RemovePolicy(Veeam/Archive/Veeam/062e4216-6c7d-4c6c-802a-d3f20e4ec7de/9cbd8b8e-9173-475b-89f4-c5dc4892819e/data.v2/Data/{3ee89759-5bcb-4d18-822d-f9473de24b3f}/{23fc064f-2615-4828-ad6a-74563965006b}/133750_c99273401c9a72fdff7bced495b1d646_00000000000000000000000000000000): Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:65519492-101e-002c-477a-a38918000000
+Time:2026-02-21T21:38:53.9968180Z
+Status: 400 (Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.)
+ErrorCode: ImmutabilityPolicyDeleteOnLockedPolicy
+
+Content:
+﻿&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;
+&lt;Error&gt;&lt;Code&gt;ImmutabilityPolicyDeleteOnLockedPolicy&lt;/Code&gt;&lt;Message&gt;Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:65519492-101e-002c-477a-a38918000000
+Time:2026-02-21T21:38:53.9968180Z&lt;/Message&gt;&lt;/Error&gt;
+
+Headers:
+Server: Windows-Azure-Blob/1.0 Microsoft-HTTPAPI/2.0
+x-ms-error-code: ImmutabilityPolicyDeleteOnLockedPolicy
+x-ms-request-id: 65519492-101e-002c-477a-a38918000000
+x-ms-version: 2025-07-05
+x-ms-client-request-id: 422d8993-b612-40d0-b124-13eeb37c3896
+Date: Sat, 21 Feb 2026 21:38:53 GMT
+Content-Length: 285
+Content-Type: application/xml
+</td></tr>
+<tr><td>11</td><td>RemovePolicy(Veeam/Archive/Veeam/062e4216-6c7d-4c6c-802a-d3f20e4ec7de/9cbd8b8e-9173-475b-89f4-c5dc4892819e/data.v2/Data/{3ee89759-5bcb-4d18-822d-f9473de24b3f}/{23fc064f-2615-4828-ad6a-74563965006b}/133755_110a2e7d6baa25638e8aa605ed30209d_00000000000000000000000000000000): Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:ecaa094f-201e-00a1-1b7a-a3beca000000
+Time:2026-02-21T21:38:54.0056953Z
+Status: 400 (Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.)
+ErrorCode: ImmutabilityPolicyDeleteOnLockedPolicy
+
+Content:
+﻿&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;
+&lt;Error&gt;&lt;Code&gt;ImmutabilityPolicyDeleteOnLockedPolicy&lt;/Code&gt;&lt;Message&gt;Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:ecaa094f-201e-00a1-1b7a-a3beca000000
+Time:2026-02-21T21:38:54.0056953Z&lt;/Message&gt;&lt;/Error&gt;
+
+Headers:
+Server: Windows-Azure-Blob/1.0 Microsoft-HTTPAPI/2.0
+x-ms-error-code: ImmutabilityPolicyDeleteOnLockedPolicy
+x-ms-request-id: ecaa094f-201e-00a1-1b7a-a3beca000000
+x-ms-version: 2025-07-05
+x-ms-client-request-id: 51ea2b13-348e-4ecf-8358-1bf9ea0f6ad8
+Date: Sat, 21 Feb 2026 21:38:53 GMT
+Content-Length: 285
+Content-Type: application/xml
+</td></tr>
+<tr><td>12</td><td>RemovePolicy(Veeam/Archive/Veeam/062e4216-6c7d-4c6c-802a-d3f20e4ec7de/9cbd8b8e-9173-475b-89f4-c5dc4892819e/data.v2/Data/{3ee89759-5bcb-4d18-822d-f9473de24b3f}/{23fc064f-2615-4828-ad6a-74563965006b}/133739_383aed1017db93c7e947c2fe56b901bd_00000000000000000000000000000000): Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:b2cd1db4-e01e-0038-117a-a3c177000000
+Time:2026-02-21T21:38:54.0019804Z
+Status: 400 (Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.)
+ErrorCode: ImmutabilityPolicyDeleteOnLockedPolicy
+
+Content:
+﻿&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;
+&lt;Error&gt;&lt;Code&gt;ImmutabilityPolicyDeleteOnLockedPolicy&lt;/Code&gt;&lt;Message&gt;Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:b2cd1db4-e01e-0038-117a-a3c177000000
+Time:2026-02-21T21:38:54.0019804Z&lt;/Message&gt;&lt;/Error&gt;
+
+Headers:
+Server: Windows-Azure-Blob/1.0 Microsoft-HTTPAPI/2.0
+x-ms-error-code: ImmutabilityPolicyDeleteOnLockedPolicy
+x-ms-request-id: b2cd1db4-e01e-0038-117a-a3c177000000
+x-ms-version: 2025-07-05
+x-ms-client-request-id: 67f832a7-d367-4462-b48e-67b5eff178e8
+Date: Sat, 21 Feb 2026 21:38:53 GMT
+Content-Length: 285
+Content-Type: application/xml
+</td></tr>
+<tr><td>13</td><td>RemovePolicy(Veeam/Archive/Veeam/062e4216-6c7d-4c6c-802a-d3f20e4ec7de/9cbd8b8e-9173-475b-89f4-c5dc4892819e/data.v2/Data/{3ee89759-5bcb-4d18-822d-f9473de24b3f}/{23fc064f-2615-4828-ad6a-74563965006b}/133740_6767be67d44363456568ac8a2e46ab0e_00000000000000000000000000000000): Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:ddf259ef-001e-00a6-377a-a3d2a9000000
+Time:2026-02-21T21:38:54.0039081Z
+Status: 400 (Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.)
+ErrorCode: ImmutabilityPolicyDeleteOnLockedPolicy
+
+Content:
+﻿&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;
+&lt;Error&gt;&lt;Code&gt;ImmutabilityPolicyDeleteOnLockedPolicy&lt;/Code&gt;&lt;Message&gt;Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:ddf259ef-001e-00a6-377a-a3d2a9000000
+Time:2026-02-21T21:38:54.0039081Z&lt;/Message&gt;&lt;/Error&gt;
+
+Headers:
+Server: Windows-Azure-Blob/1.0 Microsoft-HTTPAPI/2.0
+x-ms-error-code: ImmutabilityPolicyDeleteOnLockedPolicy
+x-ms-request-id: ddf259ef-001e-00a6-377a-a3d2a9000000
+x-ms-version: 2025-07-05
+x-ms-client-request-id: be3fd337-4097-4968-9b29-2efc08c1c6b5
+Date: Sat, 21 Feb 2026 21:38:53 GMT
+Content-Length: 285
+Content-Type: application/xml
+</td></tr>
+<tr><td>14</td><td>RemovePolicy(Veeam/Archive/Veeam/062e4216-6c7d-4c6c-802a-d3f20e4ec7de/9cbd8b8e-9173-475b-89f4-c5dc4892819e/data.v2/Data/{3ee89759-5bcb-4d18-822d-f9473de24b3f}/{23fc064f-2615-4828-ad6a-74563965006b}/133744_37b4ec4ab38cce291899e64165f33b60_00000000000000000000000000000000): Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:bdc8dfc9-401e-00fa-567a-a387f1000000
+Time:2026-02-21T21:38:54.0038761Z
+Status: 400 (Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.)
+ErrorCode: ImmutabilityPolicyDeleteOnLockedPolicy
+
+Content:
+﻿&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;
+&lt;Error&gt;&lt;Code&gt;ImmutabilityPolicyDeleteOnLockedPolicy&lt;/Code&gt;&lt;Message&gt;Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:bdc8dfc9-401e-00fa-567a-a387f1000000
+Time:2026-02-21T21:38:54.0038761Z&lt;/Message&gt;&lt;/Error&gt;
+
+Headers:
+Server: Windows-Azure-Blob/1.0 Microsoft-HTTPAPI/2.0
+x-ms-error-code: ImmutabilityPolicyDeleteOnLockedPolicy
+x-ms-request-id: bdc8dfc9-401e-00fa-567a-a387f1000000
+x-ms-version: 2025-07-05
+x-ms-client-request-id: 2e6001ed-2b38-4b64-a8b0-e9c302214a4a
+Date: Sat, 21 Feb 2026 21:38:53 GMT
+Content-Length: 285
+Content-Type: application/xml
+</td></tr>
+<tr><td>15</td><td>RemovePolicy(Veeam/Archive/Veeam/062e4216-6c7d-4c6c-802a-d3f20e4ec7de/9cbd8b8e-9173-475b-89f4-c5dc4892819e/data.v2/Data/{3ee89759-5bcb-4d18-822d-f9473de24b3f}/{23fc064f-2615-4828-ad6a-74563965006b}/133762_161cb253f3b521c2a7a12eac3bc83b5b_00000000000000000000000000000000): Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:6bb8b993-601e-0036-357a-a3e8c7000000
+Time:2026-02-21T21:38:54.1501377Z
+Status: 400 (Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.)
+ErrorCode: ImmutabilityPolicyDeleteOnLockedPolicy
+
+Content:
+﻿&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;
+&lt;Error&gt;&lt;Code&gt;ImmutabilityPolicyDeleteOnLockedPolicy&lt;/Code&gt;&lt;Message&gt;Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:6bb8b993-601e-0036-357a-a3e8c7000000
+Time:2026-02-21T21:38:54.1501377Z&lt;/Message&gt;&lt;/Error&gt;
+
+Headers:
+Server: Windows-Azure-Blob/1.0 Microsoft-HTTPAPI/2.0
+x-ms-error-code: ImmutabilityPolicyDeleteOnLockedPolicy
+x-ms-request-id: 6bb8b993-601e-0036-357a-a3e8c7000000
+x-ms-version: 2025-07-05
+x-ms-client-request-id: c21de1ad-8b9e-4789-990a-f6cec9eed43d
+Date: Sat, 21 Feb 2026 21:38:53 GMT
+Content-Length: 285
+Content-Type: application/xml
+</td></tr>
+<tr><td>16</td><td>RemovePolicy(Veeam/Archive/Veeam/062e4216-6c7d-4c6c-802a-d3f20e4ec7de/9cbd8b8e-9173-475b-89f4-c5dc4892819e/data.v2/Data/{3ee89759-5bcb-4d18-822d-f9473de24b3f}/{23fc064f-2615-4828-ad6a-74563965006b}/133734_fa43de2a3605c7da51d66aa82f082d22_00000000000000000000000000000000): Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:1d6dfd67-c01e-003f-197a-a3ad14000000
+Time:2026-02-21T21:38:54.1527851Z
+Status: 400 (Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.)
+ErrorCode: ImmutabilityPolicyDeleteOnLockedPolicy
+
+Content:
+﻿&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;
+&lt;Error&gt;&lt;Code&gt;ImmutabilityPolicyDeleteOnLockedPolicy&lt;/Code&gt;&lt;Message&gt;Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:1d6dfd67-c01e-003f-197a-a3ad14000000
+Time:2026-02-21T21:38:54.1527851Z&lt;/Message&gt;&lt;/Error&gt;
+
+Headers:
+Server: Windows-Azure-Blob/1.0 Microsoft-HTTPAPI/2.0
+x-ms-error-code: ImmutabilityPolicyDeleteOnLockedPolicy
+x-ms-request-id: 1d6dfd67-c01e-003f-197a-a3ad14000000
+x-ms-version: 2025-07-05
+x-ms-client-request-id: b6e0244b-7ea8-4c44-b7e9-6e48b7279ae1
+Date: Sat, 21 Feb 2026 21:38:53 GMT
+Content-Length: 285
+Content-Type: application/xml
+</td></tr>
+<tr><td>17</td><td>RemovePolicy(Veeam/Archive/Veeam/062e4216-6c7d-4c6c-802a-d3f20e4ec7de/9cbd8b8e-9173-475b-89f4-c5dc4892819e/data.v2/Data/{3ee89759-5bcb-4d18-822d-f9473de24b3f}/{23fc064f-2615-4828-ad6a-74563965006b}/133763_ab01b41cadd28493b6c28f0a779e0d14_00000000000000000000000000000000): Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:4247be12-f01e-000b-7b7a-a39edc000000
+Time:2026-02-21T21:38:54.1544311Z
+Status: 400 (Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.)
+ErrorCode: ImmutabilityPolicyDeleteOnLockedPolicy
+
+Content:
+﻿&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;
+&lt;Error&gt;&lt;Code&gt;ImmutabilityPolicyDeleteOnLockedPolicy&lt;/Code&gt;&lt;Message&gt;Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:4247be12-f01e-000b-7b7a-a39edc000000
+Time:2026-02-21T21:38:54.1544311Z&lt;/Message&gt;&lt;/Error&gt;
+
+Headers:
+Server: Windows-Azure-Blob/1.0 Microsoft-HTTPAPI/2.0
+x-ms-error-code: ImmutabilityPolicyDeleteOnLockedPolicy
+x-ms-request-id: 4247be12-f01e-000b-7b7a-a39edc000000
+x-ms-version: 2025-07-05
+x-ms-client-request-id: cacd1133-58c6-4a8a-ae94-cb41ffcd812e
+Date: Sat, 21 Feb 2026 21:38:54 GMT
+Content-Length: 285
+Content-Type: application/xml
+</td></tr>
+<tr><td>18</td><td>RemovePolicy(Veeam/Archive/Veeam/062e4216-6c7d-4c6c-802a-d3f20e4ec7de/9cbd8b8e-9173-475b-89f4-c5dc4892819e/data.v2/Data/{3ee89759-5bcb-4d18-822d-f9473de24b3f}/{23fc064f-2615-4828-ad6a-74563965006b}/133757_97df34c48559881c1b23a9da572b4e82_00000000000000000000000000000000): Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:d818b20d-701e-003a-5e7a-a37fcf000000
+Time:2026-02-21T21:38:54.1564853Z
+Status: 400 (Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.)
+ErrorCode: ImmutabilityPolicyDeleteOnLockedPolicy
+
+Content:
+﻿&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;
+&lt;Error&gt;&lt;Code&gt;ImmutabilityPolicyDeleteOnLockedPolicy&lt;/Code&gt;&lt;Message&gt;Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:d818b20d-701e-003a-5e7a-a37fcf000000
+Time:2026-02-21T21:38:54.1564853Z&lt;/Message&gt;&lt;/Error&gt;
+
+Headers:
+Server: Windows-Azure-Blob/1.0 Microsoft-HTTPAPI/2.0
+x-ms-error-code: ImmutabilityPolicyDeleteOnLockedPolicy
+x-ms-request-id: d818b20d-701e-003a-5e7a-a37fcf000000
+x-ms-version: 2025-07-05
+x-ms-client-request-id: e78bbab9-db48-4cce-9708-b10cfadcc0f9
+Date: Sat, 21 Feb 2026 21:38:53 GMT
+Content-Length: 285
+Content-Type: application/xml
+</td></tr>
+<tr><td>19</td><td>RemovePolicy(Veeam/Archive/Veeam/062e4216-6c7d-4c6c-802a-d3f20e4ec7de/9cbd8b8e-9173-475b-89f4-c5dc4892819e/data.v2/Data/{3ee89759-5bcb-4d18-822d-f9473de24b3f}/{23fc064f-2615-4828-ad6a-74563965006b}/133748_b22916f5d85eb1b407d3f16de9fef2e6_00000000000000000000000000000000): Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:5ef73c51-e01e-005a-7c7a-a30350000000
+Time:2026-02-21T21:38:54.1575426Z
+Status: 400 (Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.)
+ErrorCode: ImmutabilityPolicyDeleteOnLockedPolicy
+
+Content:
+﻿&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;
+&lt;Error&gt;&lt;Code&gt;ImmutabilityPolicyDeleteOnLockedPolicy&lt;/Code&gt;&lt;Message&gt;Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:5ef73c51-e01e-005a-7c7a-a30350000000
+Time:2026-02-21T21:38:54.1575426Z&lt;/Message&gt;&lt;/Error&gt;
+
+Headers:
+Server: Windows-Azure-Blob/1.0 Microsoft-HTTPAPI/2.0
+x-ms-error-code: ImmutabilityPolicyDeleteOnLockedPolicy
+x-ms-request-id: 5ef73c51-e01e-005a-7c7a-a30350000000
+x-ms-version: 2025-07-05
+x-ms-client-request-id: 4a508dd5-7b11-4613-8d31-29d027cf2d34
+Date: Sat, 21 Feb 2026 21:38:53 GMT
+Content-Length: 285
+Content-Type: application/xml
+</td></tr>
+<tr><td>20</td><td>RemovePolicy(Veeam/Archive/Veeam/062e4216-6c7d-4c6c-802a-d3f20e4ec7de/9cbd8b8e-9173-475b-89f4-c5dc4892819e/data.v2/Data/{3ee89759-5bcb-4d18-822d-f9473de24b3f}/{23fc064f-2615-4828-ad6a-74563965006b}/133742_558a337fc36b20b3c6dc24a81073bfe7_00000000000000000000000000000000): Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:e60b2d66-201e-00d3-2d7a-a3b985000000
+Time:2026-02-21T21:38:54.1452467Z
+Status: 400 (Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.)
+ErrorCode: ImmutabilityPolicyDeleteOnLockedPolicy
+
+Content:
+﻿&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;
+&lt;Error&gt;&lt;Code&gt;ImmutabilityPolicyDeleteOnLockedPolicy&lt;/Code&gt;&lt;Message&gt;Blob Immutability Policy: deleting UntilDate on locked policy is not allowed.
+RequestId:e60b2d66-201e-00d3-2d7a-a3b985000000
+Time:2026-02-21T21:38:54.1452467Z&lt;/Message&gt;&lt;/Error&gt;
+
+Headers:
+Server: Windows-Azure-Blob/1.0 Microsoft-HTTPAPI/2.0
+x-ms-error-code: ImmutabilityPolicyDeleteOnLockedPolicy
+x-ms-request-id: e60b2d66-201e-00d3-2d7a-a3b985000000
+x-ms-version: 2025-07-05
+x-ms-client-request-id: 8363f37b-5ddc-4fff-9291-8f1e627ae941
+Date: Sat, 21 Feb 2026 21:38:53 GMT
+Content-Length: 285
+Content-Type: application/xml
+</td></tr>
+</table>
+<div class='footer'><p>Gerado por RemoveExpiredBlobs .NET v2.0.0 | Concorrência: 50 | BatchSize: 256</p></div></body></html>
