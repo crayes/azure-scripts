@@ -22,7 +22,7 @@ namespace RemoveExpiredBlobs;
 
 public static class Program
 {
-    const string Version = "2.0.0";
+    const string Version = "2.1.0";
     const int StreamingBatchSize = 5000;
 
     static string? SubscriptionId;
@@ -41,6 +41,8 @@ public static class Program
     static int BatchSize = 256;
     static string? AccountKey;
     static string? ResumeFrom;
+    static string? TenantId;
+    static string AuthMethod = "auto"; // auto, browser, azcli, key, managed
 
     static long TotalBlobs;
     static long ExpiredBlobs;
@@ -83,12 +85,15 @@ public static class Program
             }
         }
 
-        Log("Verificando conexão Azure...", "INFO");
-        var credential = new DefaultAzureCredential(new DefaultAzureCredentialOptions
+        // ── Auth ────────────────────────────────────────────────────
+        Azure.Core.TokenCredential? credential = null;
+        if (string.IsNullOrEmpty(AccountKey))
         {
-            ExcludeVisualStudioCodeCredential = true,
-            ExcludeVisualStudioCredential = true,
-        });
+            credential = BuildCredential();
+            if (credential == null && string.IsNullOrEmpty(AccountKey)) return 1;
+        }
+        else
+            Log("Autenticação: AccountKey", "SUCCESS");
 
         var accounts = await DiscoverStorageAccounts(credential);
         if (accounts.Count == 0) { Log("Nenhuma Storage Account encontrada.", "ERROR"); return 1; }
@@ -135,6 +140,56 @@ public static class Program
                 var containerClient = blobServiceClient.GetBlobContainerClient(containerName);
                 Log($"  Container [{ctrIdx}/{containers.Count}]: {containerName}", "INFO");
 
+                // Show container-level immutability policy info
+                try
+                {
+                    var cProps = await containerClient.GetPropertiesAsync();
+                    var hasImmutability = cProps.Value.HasImmutabilityPolicy == true;
+                    var hasLegalHold = cProps.Value.HasLegalHold == true;
+                    if (hasImmutability || hasLegalHold)
+                    {
+                        var policyInfo = new List<string>();
+                        if (hasImmutability) policyInfo.Add("ImmutabilityPolicy");
+                        if (hasLegalHold) policyInfo.Add("LegalHold");
+                        Log($"    Container protegido: {string.Join(", ", policyInfo)}", "WARN");
+
+                        // Get detailed policy via ARM for expiration date
+                        if (hasImmutability && credential != null)
+                        {
+                            try
+                            {
+                                var armClient = new ArmClient(credential);
+                                var sub = string.IsNullOrEmpty(SubscriptionId)
+                                    ? await armClient.GetDefaultSubscriptionAsync()
+                                    : armClient.GetSubscriptionResource(new Azure.Core.ResourceIdentifier($"/subscriptions/{SubscriptionId}"));
+
+                                await foreach (var sa in sub.GetStorageAccountsAsync())
+                                {
+                                    if (!string.Equals(sa.Data.Name, acctName, StringComparison.OrdinalIgnoreCase)) continue;
+                                    var blobSvc = sa.GetBlobService();
+                                    var ctr = (await blobSvc.GetBlobContainerAsync(containerName)).Value;
+                                    var ctrData = ctr.Data;
+                                    var immPolicy = ctrData.ImmutabilityPolicy;
+                                    var days = immPolicy?.ImmutabilityPeriodSinceCreationInDays;
+                                    var state = immPolicy?.State;
+                                    Log($"    Policy: {state} | Retention: {days} dias", "WARN");
+                                    if (state == Azure.ResourceManager.Storage.Models.ImmutabilityPolicyState.Locked)
+                                        Log($"    Policy LOCKED — container não pode ser deletado até policy expirar", "WARN");
+                                    else if (state == Azure.ResourceManager.Storage.Models.ImmutabilityPolicyState.Unlocked)
+                                        Log($"    Policy UNLOCKED — pode ser removida manualmente", "INFO");
+                                    break;
+                                }
+                            }
+                            catch (Exception ex) { Log($"    (Não foi possível obter detalhes da policy: {ex.Message})", "INFO"); }
+                        }
+                    }
+                    else
+                    {
+                        Log($"    Sem immutability policy no container", "INFO");
+                    }
+                }
+                catch { /* non-critical */ }
+
                 var ctrReport = new ContainerReport { Account = acctName, Container = containerName };
                 ContainerReports.Add(ctrReport);
 
@@ -146,11 +201,35 @@ public static class Program
                 var ctrRemoved = 0L;
                 var ctrErrors = 0L;
 
-                await foreach (var blob in containerClient.GetBlobsAsync(
-                    traits: BlobTraits.ImmutabilityPolicy | BlobTraits.LegalHold,
-                    states: BlobStates.Version,
-                    prefix: BlobPrefix))
+                IAsyncEnumerator<BlobItem>? blobEnumerator = null;
+                try
                 {
+                    blobEnumerator = containerClient.GetBlobsAsync(
+                        traits: BlobTraits.ImmutabilityPolicy | BlobTraits.LegalHold,
+                        states: BlobStates.Version,
+                        prefix: BlobPrefix).GetAsyncEnumerator();
+                }
+                catch (Azure.RequestFailedException ex) when (ex.Status == 403)
+                {
+                    Log($"    Erro 403 no container {containerName}: sem permissão de leitura.", "ERROR");
+                    Log("    Adicione 'Storage Blob Data Owner' nesta storage account.", "INFO");
+                    Log("    Ou use -AccountKey <key> (portal → Storage Account → Access keys)", "INFO");
+                    continue;
+                }
+
+                while (true)
+                {
+                    bool moved;
+                    try { moved = await blobEnumerator!.MoveNextAsync(); }
+                    catch (Azure.RequestFailedException ex) when (ex.Status == 403)
+                    {
+                        Log($"    Erro 403 no container {containerName}: sem permissão de leitura.", "ERROR");
+                        Log("    Adicione 'Storage Blob Data Owner' nesta storage account.", "INFO");
+                        Log("    Ou use -AccountKey <key> (portal → Storage Account → Access keys)", "INFO");
+                        break;
+                    }
+                    if (!moved) break;
+                    var blob = blobEnumerator.Current;
                     blobCount++;
                     Interlocked.Increment(ref TotalBlobs);
 
@@ -590,7 +669,120 @@ public static class Program
     static void AppendCard(StringBuilder sb, string label, string value, string cssClass) =>
         sb.AppendLine($"<div class='card {cssClass}'><div class='label'>{label}</div><div class='value'>{value}</div></div>");
 
-    static async Task<List<(string Name, string Key)>> DiscoverStorageAccounts(DefaultAzureCredential credential)
+    // ════════════════════════════════════════════════════════════════════
+    // AUTH — Build credential based on -Auth method
+    // ════════════════════════════════════════════════════════════════════
+    static Azure.Core.TokenCredential? BuildCredential()
+    {
+        var method = AuthMethod.ToLowerInvariant();
+
+        // Key auth doesn't need a credential
+        if (method == "key" || !string.IsNullOrEmpty(AccountKey))
+        {
+            if (string.IsNullOrEmpty(AccountKey))
+            {
+                Log("Erro: -Auth Key requer -AccountKey <key>", "ERROR");
+                Log("  Obtenha a key no portal: Storage Account → Security + networking → Access keys", "INFO");
+                return null;
+            }
+            return null; // AccountKey handled in CreateBlobServiceClient
+        }
+
+        Log("Autenticando no Azure...", "INFO");
+
+        try
+        {
+            switch (method)
+            {
+                case "browser":
+                    if (string.IsNullOrEmpty(TenantId))
+                    {
+                        Log("Erro: -Auth Browser requer -TenantId <tenant>", "ERROR");
+                        Log("  Exemplo: -TenantId 564b30d9-0430-428e-95c0-3c68792dc401", "INFO");
+                        return null;
+                    }
+                    Log($"Abrindo navegador para login (Tenant: {TenantId})...", "INFO");
+                    var browserCred = new InteractiveBrowserCredential(new InteractiveBrowserCredentialOptions { TenantId = TenantId });
+                    // Force token acquisition to validate
+                    browserCred.GetToken(new Azure.Core.TokenRequestContext(["https://storage.azure.com/.default"]));
+                    Log("Login via Browser OK", "SUCCESS");
+                    return browserCred;
+
+                case "azcli":
+                    var cliOptions = new AzureCliCredentialOptions();
+                    if (!string.IsNullOrEmpty(TenantId)) cliOptions.TenantId = TenantId;
+                    var cliCred = new AzureCliCredential(cliOptions);
+                    cliCred.GetToken(new Azure.Core.TokenRequestContext(["https://storage.azure.com/.default"]));
+                    Log("Login via Azure CLI OK", "SUCCESS");
+                    return cliCred;
+
+                case "managed":
+                    var managedCred = new ManagedIdentityCredential();
+                    managedCred.GetToken(new Azure.Core.TokenRequestContext(["https://storage.azure.com/.default"]));
+                    Log("Login via Managed Identity OK", "SUCCESS");
+                    return managedCred;
+
+                case "auto":
+                default:
+                    // Try in order: AccountKey → AzCli → Browser
+                    if (!string.IsNullOrEmpty(AccountKey)) return null;
+
+                    // Try Azure CLI first (fastest, no popup)
+                    try
+                    {
+                        var autoCliOptions = new AzureCliCredentialOptions();
+                        if (!string.IsNullOrEmpty(TenantId)) autoCliOptions.TenantId = TenantId;
+                        var autoCli = new AzureCliCredential(autoCliOptions);
+                        autoCli.GetToken(new Azure.Core.TokenRequestContext(["https://storage.azure.com/.default"]));
+                        Log("Login via Azure CLI (auto) OK", "SUCCESS");
+                        return autoCli;
+                    }
+                    catch
+                    {
+                        Log("Azure CLI não disponível, tentando login interativo...", "WARN");
+                    }
+
+                    // Fall back to interactive browser
+                    if (string.IsNullOrEmpty(TenantId))
+                    {
+                        Log("Erro: login automático falhou. Use uma das opções:", "ERROR");
+                        Log("  1. -AccountKey <key>                (mais simples)", "INFO");
+                        Log("  2. -Auth Browser -TenantId <tenant>  (login interativo)", "INFO");
+                        Log("  3. -Auth AzCli                      (requer 'az login' primeiro)", "INFO");
+                        Log("", "INFO");
+                        Log("  Obtenha a AccountKey no portal Azure:", "INFO");
+                        Log("  Storage Account → Security + networking → Access keys → key1", "INFO");
+                        return null;
+                    }
+
+                    Log($"Abrindo navegador para login (Tenant: {TenantId})...", "INFO");
+                    var autoBrowser = new InteractiveBrowserCredential(new InteractiveBrowserCredentialOptions { TenantId = TenantId });
+                    autoBrowser.GetToken(new Azure.Core.TokenRequestContext(["https://storage.azure.com/.default"]));
+                    Log("Login via Browser (auto) OK", "SUCCESS");
+                    return autoBrowser;
+            }
+        }
+        catch (AuthenticationFailedException ex)
+        {
+            Log($"Falha na autenticação: {ex.Message}", "ERROR");
+            Log("", "INFO");
+            Log("Dicas:", "INFO");
+            Log("  • Verifique se o Tenant ID está correto", "INFO");
+            Log("  • Verifique se sua conta tem role 'Storage Blob Data Owner' na storage account", "INFO");
+            Log("  • Alternativa: use -AccountKey <key> (portal → Storage Account → Access keys)", "INFO");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Log($"Erro de autenticação: {ex.Message}", "ERROR");
+            return null;
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // DISCOVER STORAGE ACCOUNTS
+    // ════════════════════════════════════════════════════════════════════
+    static async Task<List<(string Name, string Key)>> DiscoverStorageAccounts(Azure.Core.TokenCredential? credential)
     {
         var result = new List<(string, string)>();
 
@@ -601,9 +793,36 @@ public static class Program
                 var client = CreateBlobServiceClient(StorageAccountName, AccountKey, credential);
                 await client.GetPropertiesAsync();
                 result.Add((StorageAccountName, AccountKey ?? ""));
-                Log($"Conectado: {StorageAccountName} (via {(!string.IsNullOrEmpty(AccountKey) ? "AccountKey" : "DefaultAzureCredential")})", "SUCCESS");
+                var authInfo = !string.IsNullOrEmpty(AccountKey) ? "AccountKey" : AuthMethod;
+                Log($"Conectado: {StorageAccountName} (via {authInfo})", "SUCCESS");
             }
-            catch (Exception ex) { Log($"Erro conectando a {StorageAccountName}: {ex.Message}", "ERROR"); }
+            catch (Azure.RequestFailedException ex) when (ex.Status == 403)
+            {
+                Log($"Erro 403 em {StorageAccountName}: Sem permissão.", "ERROR");
+                if (string.IsNullOrEmpty(AccountKey))
+                {
+                    Log("  Sua conta precisa do role 'Storage Blob Data Owner' nesta storage account.", "INFO");
+                    Log("  Ou use -AccountKey <key> (portal → Storage Account → Access keys → key1)", "INFO");
+                }
+                else
+                    Log("  Verifique se a Account Key está correta para esta storage account.", "INFO");
+            }
+            catch (Azure.RequestFailedException ex) when (ex.ErrorCode == "AuthenticationFailed")
+            {
+                Log($"Erro de autenticação em {StorageAccountName}: key inválida ou expirada.", "ERROR");
+                Log("  Verifique a Account Key no portal: Storage Account → Access keys → key1", "INFO");
+                Log("  Cada storage account tem sua própria key!", "WARN");
+            }
+            catch (Exception ex)
+            {
+                Log($"Erro conectando a {StorageAccountName}: {ex.Message}", "ERROR");
+            }
+            return result;
+        }
+
+        if (credential == null)
+        {
+            Log("Erro: sem -StorageAccountName, precisa de credenciais Azure para descobrir storage accounts.", "ERROR");
             return result;
         }
 
@@ -628,11 +847,13 @@ public static class Program
         return result;
     }
 
-    static BlobServiceClient CreateBlobServiceClient(string accountName, string? key, DefaultAzureCredential credential)
+    static BlobServiceClient CreateBlobServiceClient(string accountName, string? key, Azure.Core.TokenCredential? credential)
     {
         if (!string.IsNullOrEmpty(key))
             return new BlobServiceClient($"DefaultEndpointsProtocol=https;AccountName={accountName};AccountKey={key};EndpointSuffix=core.windows.net");
-        return new BlobServiceClient(new Uri($"https://{accountName}.blob.core.windows.net"), credential);
+        if (credential != null)
+            return new BlobServiceClient(new Uri($"https://{accountName}.blob.core.windows.net"), credential);
+        throw new InvalidOperationException("Sem credenciais: forneça -AccountKey ou configure autenticação com -Auth");
     }
 
     static void ParseArgs(string[] args)
@@ -658,6 +879,8 @@ public static class Program
                 case "batchsize": BatchSize = Math.Min(int.Parse(args[++i]), 256); break;
                 case "accountkey": AccountKey = args[++i]; break;
                 case "resumefrom": ResumeFrom = args[++i]; break;
+                case "tenantid" or "tenant": TenantId = args[++i]; break;
+                case "auth": AuthMethod = args[++i]; break;
                 case "help" or "h" or "?": PrintUsage(); Environment.Exit(0); break;
                 default: Log($"Argumento desconhecido: {args[i]}", "WARN"); break;
             }
@@ -676,6 +899,13 @@ public static class Program
           -ContainerName <n>        Filtrar por container
           -BlobPrefix <prefix>      Filtrar por prefixo de blob
           -AccountKey <key>         Storage account key (bypasses RBAC)
+          -Auth <method>            Método de autenticação:
+                                      auto    = AzCli → Browser (default)
+                                      browser = Login interativo no navegador
+                                      azcli   = Usa 'az login' existente
+                                      key     = Usa -AccountKey
+                                      managed = Azure Managed Identity
+          -TenantId <id>            Azure AD Tenant ID (obrigatório para browser)
           -RemoveBlobs              Deletar blobs expirados
           -RemovePolicyOnly         Apenas remover políticas
           -Force                    Pular confirmação
