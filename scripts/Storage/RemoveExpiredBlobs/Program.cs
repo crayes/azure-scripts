@@ -139,6 +139,7 @@ public static class Program
                 ContainerReports.Add(ctrReport);
 
                 var pendingDelete = new List<BlobItemInfo>();
+                var pendingRoots = new List<BlobItemInfo>();
                 var blobCount = 0;
                 var ctrEligible = 0L;
                 var ctrEligibleBytes = 0L;
@@ -203,15 +204,22 @@ public static class Program
                         ctrEligible++;
                         ctrEligibleBytes += props.ContentLength ?? 0;
 
-                        pendingDelete.Add(new BlobItemInfo
+                        var item = new BlobItemInfo
                         {
                             Container = containerName,
                             Name = blob.Name,
                             VersionId = blob.VersionId,
                             Size = props.ContentLength ?? 0,
                             Mode = policyMode,
-                            ExpiresOn = expiresOn
-                        });
+                            ExpiresOn = expiresOn,
+                            IsCurrentVersion = blob.IsLatestVersion == true
+                        };
+
+                        // Root/current blobs must be deleted AFTER their old versions
+                        if (item.IsCurrentVersion)
+                            pendingRoots.Add(item);
+                        else
+                            pendingDelete.Add(item);
                     }
 
                     if (csvWriter != null)
@@ -242,11 +250,26 @@ public static class Program
                     if (MaxErrors > 0 && ErrorCount >= MaxErrors) break;
                 }
 
+                // Flush remaining old versions
                 if (pendingDelete.Count > 0 && (RemoveBlobs || RemovePolicyOnly))
                 {
                     var (rem, err) = await ProcessDeleteBatch(containerClient, blobServiceClient, batchClient, containerName, pendingDelete);
                     ctrRemoved += rem; ctrErrors += err;
                     pendingDelete.Clear();
+                    SaveCheckpoint(blobCount);
+                }
+
+                // Delete root/current blobs AFTER all old versions are gone
+                if (pendingRoots.Count > 0 && (RemoveBlobs || RemovePolicyOnly))
+                {
+                    Log($"    ► Deletando {pendingRoots.Count:N0} root blobs ({FormatSize(pendingRoots.Sum(r => r.Size))})...", "WARN");
+                    for (var ri = 0; ri < pendingRoots.Count; ri += StreamingBatchSize)
+                    {
+                        var rootBatch = pendingRoots.Skip(ri).Take(StreamingBatchSize).ToList();
+                        var (rem, err) = await DeleteRootBlobsAsync(containerClient, rootBatch);
+                        ctrRemoved += rem; ctrErrors += err;
+                    }
+                    pendingRoots.Clear();
                     SaveCheckpoint(blobCount);
                 }
 
@@ -451,6 +474,47 @@ public static class Program
 
         await Task.WhenAll(tasks);
         Log($"      Deletados: {removed}, erros: {errors}", removed > 0 ? "SUCCESS" : "INFO");
+        return (removed, errors);
+    }
+
+    // Delete root/current blobs — must NOT use .WithVersion()
+    static async Task<(long removed, long errors)> DeleteRootBlobsAsync(
+        BlobContainerClient containerClient, List<BlobItemInfo> items)
+    {
+        var semaphore = new SemaphoreSlim(Concurrency);
+        long removed = 0, errors = 0;
+        var tasks = new List<Task>();
+
+        foreach (var item in items)
+        {
+            await semaphore.WaitAsync();
+            tasks.Add(Task.Run(async () =>
+            {
+                try
+                {
+                    var blobClient = containerClient.GetBlobClient(item.Name);
+                    await blobClient.DeleteAsync(DeleteSnapshotsOption.IncludeSnapshots);
+                    Interlocked.Increment(ref removed);
+                    Interlocked.Increment(ref RemovedBlobs);
+                    Interlocked.Add(ref RemovedBytes, item.Size);
+                }
+                catch (Azure.RequestFailedException ex) when (ex.Status == 404)
+                {
+                    Interlocked.Increment(ref removed);
+                    Interlocked.Increment(ref RemovedBlobs);
+                }
+                catch (Exception ex)
+                {
+                    Interlocked.Increment(ref errors);
+                    Interlocked.Increment(ref ErrorCount);
+                    if (ErrorList.Count < 200) ErrorList.Add($"DeleteRoot({item.Name}): {ex.Message}");
+                }
+                finally { semaphore.Release(); }
+            }));
+        }
+
+        await Task.WhenAll(tasks);
+        Log($"      Root blobs deletados: {removed}, erros: {errors}", removed > 0 ? "SUCCESS" : "INFO");
         return (removed, errors);
     }
 
@@ -661,6 +725,7 @@ public class BlobItemInfo
     public long Size { get; set; }
     public string? Mode { get; set; }
     public DateTimeOffset? ExpiresOn { get; set; }
+    public bool IsCurrentVersion { get; set; }
 }
 
 public class ContainerReport
