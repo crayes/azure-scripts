@@ -96,18 +96,39 @@ Se a batch API falhar (ex: versioned blobs com formato incompatível), faz fallb
 
 ## Autenticação
 
-A ferramenta suporta dois métodos:
+A ferramenta suporta múltiplos métodos de autenticação via `-Auth`:
 
-1. **Account Key** (recomendado para automação):
-   ```bash
-   -AccountKey "<sua-key>"
-   ```
+### 1. Account Key (mais simples)
+```bash
+dotnet run -- -StorageAccountName myaccount -AccountKey "<key>"
+# Key disponível no portal: Storage Account → Security + networking → Access keys
+```
 
-2. **DefaultAzureCredential** (Azure CLI, Managed Identity, etc.):
-   ```bash
-   az login --tenant "<tenant-id>"
-   # Não precisa passar -AccountKey
-   ```
+### 2. Login Interativo (Browser)
+```bash
+dotnet run -- -StorageAccountName myaccount -Auth Browser -TenantId "<tenant-id>"
+# Abre o navegador para login. Requer role 'Storage Blob Data Owner'.
+```
+
+### 3. Azure CLI
+```bash
+az login --tenant "<tenant-id>"
+dotnet run -- -StorageAccountName myaccount -Auth AzCli
+```
+
+### 4. Automático (default)
+```bash
+dotnet run -- -StorageAccountName myaccount -TenantId "<tenant-id>"
+# Tenta: AzCli → Browser. Se ambos falharem, mostra instruções claras.
+```
+
+### 5. Managed Identity (Azure VMs / Automation)
+```bash
+dotnet run -- -StorageAccountName myaccount -Auth Managed
+```
+
+> **Nota**: Para métodos RBAC (Browser, AzCli, Managed), sua conta precisa do role
+> **Storage Blob Data Owner** na storage account alvo.
 
 ## Arquitetura
 
